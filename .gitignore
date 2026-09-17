@@ -1,0 +1,36 @@
+﻿# General
+.DS_Store
+.env
+node_modules/
+dist/
+build/
+*.log
+
+# macOS App (Swift)
+*.xcworkspace/
+xcuserdata/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xcuserstate
+DerivedData/
+
+# Backend (Go)
+/backend/backend
+/backend/bin/
+
+# ML Training (Python)
+__pycache__/
+*.py[cod]
+*.class
+*.so
+venv/
+.venv/
+env/
+
+# Admin Portal (Node)
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
