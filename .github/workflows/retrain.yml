@@ -1,0 +1,72 @@
+name: Retrain Embeddings
+
+on:
+  schedule:
+    # Weekly on Sunday at 03:00 UTC (per SRS §7 — scheduled retraining)
+    - cron: '0 3 * * 0'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  retrain:
+    name: Generate Face Embeddings
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('ml-training/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        working-directory: ml-training
+
+      - name: Authenticate to Google Cloud
+        # Only needed if downloading face images from Drive
+        # Secrets: GOOGLE_SERVICE_ACCOUNT_KEY stored as GitHub encrypted secret (NFR-8)
+        if: env.GOOGLE_SERVICE_ACCOUNT_KEY != ''
+        env:
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+        run: |
+          echo "$GOOGLE_SERVICE_ACCOUNT_KEY" > /tmp/sa-key.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json" >> $GITHUB_ENV
+
+      - name: Download face dataset from Drive
+        # TODO: Implement Drive download script when face images are available
+        # For now, this step is a placeholder
+        run: echo "Face dataset download — configure when Drive folder is set up"
+        working-directory: ml-training
+
+      - name: Run embedding generation pipeline
+        run: |
+          python -m src.pipeline \
+            --dataset-dir ./Face-Dataset \
+            --output ./output/embeddings.json \
+            --previous ./output/embeddings.json \
+            --verbose
+        working-directory: ml-training
+
+      - name: Upload embeddings artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: embeddings-${{ github.run_number }}
+          path: ml-training/output/embeddings.json
+          retention-days: 30
+
+      - name: Commit updated embeddings
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ml-training/output/embeddings.json
+          git diff --cached --quiet || git commit -m "ml-training: update embeddings (run #${{ github.run_number }})"
+          git push
