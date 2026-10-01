@@ -1,4 +1,4 @@
-﻿name: CI
+name: CI
 
 on:
   push:
@@ -16,28 +16,33 @@ jobs:
         run: echo "xcodebuild goes here when Xcode project is initialized"
 
   backend-build:
-    name: Build Backend
+    name: Test Backend (Apps Script)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          go-version: '1.21'
-      - name: Build placeholder
-        run: echo "go build ./... goes here when Go module is initialized"
+          node-version: '20'
+      - name: Run backend unit tests
+        run: node tests/test_backend.js
+        working-directory: backend
 
   ml-training-build:
-    name: Build ML Pipeline
+    name: Test ML Pipeline
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-      - name: Build placeholder
-        run: echo "pytest or pylint goes here when Python project is initialized"
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        working-directory: ml-training
+      - name: Run tests
+        run: python -m pytest tests/ -v
+        working-directory: ml-training
 
   admin-portal-build:
     name: Build Admin Portal
