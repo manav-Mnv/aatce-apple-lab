@@ -187,6 +187,16 @@ test('rejects request with wrong secret (header)', () => {
   assertEqual(result.error_code, 'auth_invalid');
 });
 
+test('rejects request with secret in query param (must use header)', () => {
+  const result = validateSecret({
+    headers: {},
+    parameter: { secret: 'test-secret-12345' },
+    postData: null
+  });
+  assert(!result.valid, 'Query param auth must be rejected');
+  assertEqual(result.error_code, 'auth_missing');
+});
+
 test('accepts request with correct secret (header)', () => {
   const result = validateSecret({ headers: AUTH_HEADER, parameter: {} });
   assert(result.valid, 'Should be valid');
@@ -413,6 +423,17 @@ test('doPost: rejects unknown action with error_code', () => {
   resetSheets();
   const response = doPost(makePostEvent(
     { action: 'nonexistent' },
+    AUTH_HEADER
+  ));
+  const body = JSON.parse(response.getContent());
+  assert(!body.success);
+  assertEqual(body.error_code, 'unknown_action');
+});
+
+test('doPost: explicitly rejects old update_embeddings action', () => {
+  resetSheets();
+  const response = doPost(makePostEvent(
+    { action: 'update_embeddings' },
     AUTH_HEADER
   ));
   const body = JSON.parse(response.getContent());
