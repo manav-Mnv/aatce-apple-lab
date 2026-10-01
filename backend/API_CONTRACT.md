@@ -1,22 +1,61 @@
 # API Contract — AATCE Backend (Apps Script Web App)
 
-> **Version:** 1.0.0  
+> **Version:** 1.1.0  
 > **Base URL:** `https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec`  
-> **Auth:** All requests require a shared secret (see Authentication below)
+> **Auth:** `X-Shared-Secret` header on every request (see Authentication below)
 
 ---
 
 ## Authentication (FR-13, NFR-4)
 
-Every request must include the shared secret. Two methods:
+Every request must include the shared secret via the `X-Shared-Secret` HTTP header:
 
-1. **Query parameter:** `?secret=<YOUR_SECRET>`
-2. **JSON body field:** `{ "secret": "<YOUR_SECRET>", ... }`
-
-Requests without a valid secret receive:
-```json
-{ "success": false, "error": "Missing authentication secret" }
 ```
+X-Shared-Secret: <YOUR_SECRET>
+```
+
+**Example (curl):**
+```bash
+curl -H "X-Shared-Secret: $SECRET" \
+     "https://script.google.com/macros/s/.../exec?action=status"
+```
+
+> **Apps Script limitation:** Google Apps Script web apps do not expose custom
+> request headers in the `doPost`/`doGet` event object. As a workaround, the
+> backend also accepts the secret in the POST body `{ "secret": "..." }`.
+> Callers should always send the header; the body fallback exists only for
+> compatibility with the Apps Script platform.
+
+**Error responses:**
+```json
+{ "success": false, "error": "Missing authentication: send X-Shared-Secret header", "error_code": "auth_missing" }
+{ "success": false, "error": "Invalid authentication secret", "error_code": "auth_invalid" }
+```
+
+---
+
+## Error Responses
+
+All errors include a machine-readable `error_code` so callers can branch without string-matching:
+
+```json
+{
+  "success": false,
+  "error": "<human-readable message>",
+  "error_code": "<machine-readable code>"
+}
+```
+
+| error_code | Meaning | HTTP-equivalent |
+|---|---|---|
+| `auth_missing` | No secret provided | 401 |
+| `auth_invalid` | Wrong secret | 403 |
+| `auth_misconfigured` | Server-side secret not set | 500 |
+| `validation_error` | Missing/invalid required fields | 400 |
+| `cooldown` | Scan cooldown active (FR-11) — includes `cooldown_remaining_seconds` | 429 |
+| `unknown_action` | Unrecognized `action` parameter | 400 |
+| `invalid_json` | POST body is not valid JSON | 400 |
+| `server_error` | Internal server error | 500 |
 
 ---
 
@@ -24,17 +63,17 @@ Requests without a valid secret receive:
 
 ### `POST /exec` — Enroll (FR-1 through FR-6)
 
+**Headers:** `X-Shared-Secret: <secret>`  
 **Body:**
 ```json
 {
-  "secret": "<secret>",
   "action": "enroll",
   "enrollment_no": "2021001",
   "name": "Alice Student",
   "email": "alice@paruluniversity.ac.in"
 }
 ```
-- `name` and `email` are required only for new students (not in Master_Students)
+- `name` and `email` required only for new students (not in Master_Students)
 
 **Response (existing student):**
 ```json
@@ -62,14 +101,16 @@ Requests without a valid secret receive:
 }
 ```
 
+**Errors:** `validation_error` (missing enrollment_no, or missing name/email for new student)
+
 ---
 
 ### `POST /exec` — Scan (FR-7 through FR-12)
 
+**Headers:** `X-Shared-Secret: <secret>`  
 **Body:**
 ```json
 {
-  "secret": "<secret>",
   "action": "scan",
   "enrollment_no": "2021001"
 }
@@ -99,11 +140,12 @@ Requests without a valid secret receive:
 }
 ```
 
-**Response (cooldown active — FR-11):**
+**Response (cooldown — FR-11):**
 ```json
 {
   "success": false,
   "error": "Cooldown active. Please wait 85 seconds.",
+  "error_code": "cooldown",
   "cooldown_remaining_seconds": 85
 }
 ```
@@ -118,34 +160,32 @@ Requests without a valid secret receive:
 }
 ```
 
+**Errors:** `validation_error`, `cooldown`
+
 ---
 
-### `POST /exec` — Update Embeddings
+### `POST /exec` — Update Embeddings Metadata
 
+**Headers:** `X-Shared-Secret: <secret>`  
 **Body:**
 ```json
 {
-  "secret": "<secret>",
-  "action": "update_embeddings",
-  "embeddings": {
-    "version": 2,
-    "generated_at": "2026-10-01T12:00:00+05:30",
-    "model_version": "facenet-v2",
-    "entries": [
-      { "enrollment_no": "2021001", "embedding_vector": [0.1, -0.2, 0.3, ...] },
-      { "enrollment_no": "2021002", "embedding_vector": [0.4, 0.5, -0.6, ...] }
-    ]
-  }
+  "action": "update_embeddings_meta",
+  "version": 2,
+  "generated_at": "2026-10-01T12:00:00+05:30",
+  "model_version": "facenet-v2",
+  "drive_file_id": "1AbCdEfGhIjKlMnOpQrStUvWxYz",
+  "entry_count": 152
 }
 ```
+Called by the ML pipeline after uploading `embeddings.json` to Drive.
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "Embeddings updated",
-  "version": 2,
-  "entry_count": 2
+  "message": "Embeddings metadata updated",
+  "version": 2
 }
 ```
 
@@ -153,22 +193,25 @@ Requests without a valid secret receive:
 
 ## GET Endpoints
 
-### `GET /exec?action=embeddings` — Get Embeddings
+### `GET /exec?action=embeddings_version` — Embeddings Version Check
 
-**Query:** `?secret=<secret>&action=embeddings`
+**Headers:** `X-Shared-Secret: <secret>`
+
+The kiosk calls this to check whether a newer `embeddings.json` is available.
+If `version > local_version`, the kiosk downloads the file directly from Drive
+using `download_url`. The full embedding vectors are **never** routed through
+Apps Script (NFR-7).
 
 **Response:**
 ```json
 {
   "success": true,
-  "embeddings": {
-    "version": 1,
-    "generated_at": "2026-09-30T12:00:00+05:30",
-    "model_version": "facenet-v1",
-    "entries": [
-      { "enrollment_no": "2021001", "embedding_vector": [0.1, 0.2, 0.3] }
-    ]
-  }
+  "version": 3,
+  "generated_at": "2026-10-01T12:00:00+05:30",
+  "model_version": "facenet-v1",
+  "drive_file_id": "1AbCdEfGhIjKlMnOpQrStUvWxYz",
+  "entry_count": 152,
+  "download_url": "https://drive.google.com/uc?export=download&id=1AbCdEfGhIjKlMnOpQrStUvWxYz"
 }
 ```
 
@@ -176,7 +219,7 @@ Requests without a valid secret receive:
 
 ### `GET /exec?action=status` — Health Check
 
-**Query:** `?secret=<secret>&action=status`
+**Headers:** `X-Shared-Secret: <secret>`
 
 **Response:**
 ```json
@@ -192,7 +235,7 @@ Requests without a valid secret receive:
 
 ### `GET /exec?action=attendance_log` — Attendance Log (FR-20)
 
-**Query:** `?secret=<secret>&action=attendance_log`  
+**Headers:** `X-Shared-Secret: <secret>`  
 **Optional filters:** `&date=2026-10-01` `&enrollment_no=2021001`
 
 **Response:**
@@ -220,7 +263,7 @@ Requests without a valid secret receive:
 
 ### `GET /exec?action=students` — Student Roster (FR-20)
 
-**Query:** `?secret=<secret>&action=students`  
+**Headers:** `X-Shared-Secret: <secret>`  
 **Optional filters:** `&batch=SCC/5-7` `&enrollment_no=2021001`
 
 **Response:**
@@ -243,13 +286,24 @@ Requests without a valid secret receive:
 
 ---
 
-## embeddings.json Schema
+## Embeddings Architecture
 
-This is the canonical schema used by:
-- **ML pipeline** (writes it)
-- **Backend** (stores/serves it)
-- **Kiosk app** (consumes it for on-device matching)
+```
+ML Pipeline (GitHub Actions)
+  │
+  ├─ generates embeddings.json
+  ├─ uploads to Google Drive ──────────────────────┐
+  └─ calls POST update_embeddings_meta             │
+       │                                           │
+       v                                           v
+  Apps Script (Embeddings Sheet tab)         Google Drive
+  stores: version, drive_file_id            stores: embeddings.json
+       │                                           │
+       v                                           v
+  Kiosk: GET embeddings_version ──► if new ──► download from Drive
+```
 
+**embeddings.json schema** (stored in Drive, generated by ML pipeline):
 ```json
 {
   "version": "<integer, auto-incrementing>",
@@ -258,20 +312,8 @@ This is the canonical schema used by:
   "entries": [
     {
       "enrollment_no": "<string>",
-      "embedding_vector": ["<array of floats, 128 or 512 dimensions>"]
+      "embedding_vector": ["<array of floats, 512 dimensions>"]
     }
   ]
-}
-```
-
----
-
-## Error Responses
-
-All errors follow this shape:
-```json
-{
-  "success": false,
-  "error": "<human-readable error message>"
 }
 ```

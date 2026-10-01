@@ -1,100 +1,102 @@
 /**
- * Embeddings.gs — Embeddings sync endpoint (SRS §6, Phase 4 contract).
+ * Embeddings.gs — Embeddings version-check endpoint.
  *
- * Serves the current embeddings for kiosk apps to sync periodically.
- * The embeddings are stored as a JSON string in the Embeddings sheet tab,
- * or optionally as a Drive file. This endpoint is the single source
- * the kiosk reads from.
+ * ARCHITECTURE (per SRS §6, PRD §8):
+ * The full embeddings.json lives in Google Drive as a versioned file,
+ * NOT routed through Apps Script. This avoids Apps Script payload/execution
+ * limits as the student count grows (NFR-7).
  *
- * Schema (must match ml-training output exactly):
- * {
- *   "version": "<incrementing integer>",
- *   "generated_at": "<ISO 8601 timestamp>",
- *   "model_version": "<model identifier string>",
- *   "entries": [
- *     {
- *       "enrollment_no": "...",
- *       "embedding_vector": [0.123, -0.456, ...]
- *     }
- *   ]
- * }
+ * Flow:
+ *   - ML pipeline (GitHub Actions) generates embeddings.json and uploads
+ *     it to a Google Drive folder.
+ *   - ML pipeline also updates the Embeddings Sheet tab with just the
+ *     version number and Drive file ID (lightweight metadata).
+ *   - Kiosk app calls this endpoint to check the current version.
+ *     If version > local version, kiosk downloads embeddings.json
+ *     directly from Drive using the file ID.
+ *
+ * This endpoint only serves metadata — never the full embedding vectors.
+ *
+ * Embeddings Sheet tab layout:
+ *   Row 1 (header): version | generated_at | model_version | drive_file_id | entry_count
+ *   Row 2 (data):   3       | 2026-10-01.. | facenet-v1    | 1AbC...xyz    | 152
  */
 
+// Column indices for Embeddings tab (1-based)
+var EMB_COL_VERSION = 1;
+var EMB_COL_GENERATED_AT = 2;
+var EMB_COL_MODEL_VERSION = 3;
+var EMB_COL_DRIVE_FILE_ID = 4;
+var EMB_COL_ENTRY_COUNT = 5;
+
 /**
- * Handles a request to get the current embeddings.
- * @returns {Object} The embeddings JSON object.
+ * Returns the current embeddings version metadata.
+ * The kiosk uses this to decide whether to re-download from Drive.
+ *
+ * @returns {Object} Response with version metadata.
  */
-function handleGetEmbeddings() {
+function handleGetEmbeddingsVersion() {
   var config = getConfig();
 
   try {
     var sheet = getSheet(config.ATTENDANCE_SHEET_ID, config.EMBEDDINGS_TAB);
     var data = getAllData(sheet);
 
-    // The Embeddings tab stores the full JSON in cell A1 (row 1 after header,
-    // or row 1 if no header). If the tab has a header row "embeddings_json",
-    // the data is in A2.
-    var jsonString = '';
-
-    if (data.length >= 2) {
-      // Has header row — data is in row 2, col A
-      jsonString = data[1][0];
-    } else if (data.length === 1) {
-      // Single row — could be header or data
-      jsonString = data[0][0];
-    }
-
-    if (!jsonString) {
-      // No embeddings yet — return empty but valid structure
+    // No data or only header
+    if (data.length < 2) {
       return {
         success: true,
-        embeddings: {
-          version: 0,
-          generated_at: '',
-          model_version: '',
-          entries: []
-        }
+        version: 0,
+        generated_at: '',
+        model_version: '',
+        drive_file_id: '',
+        entry_count: 0,
+        download_url: ''
       };
     }
 
-    var embeddings = JSON.parse(jsonString);
+    var row = data[1]; // Data row (0 = header, 1 = data)
+    var driveFileId = row[EMB_COL_DRIVE_FILE_ID - 1] || '';
 
     return {
       success: true,
-      embeddings: embeddings
+      version: parseInt(row[EMB_COL_VERSION - 1]) || 0,
+      generated_at: row[EMB_COL_GENERATED_AT - 1] || '',
+      model_version: row[EMB_COL_MODEL_VERSION - 1] || '',
+      drive_file_id: driveFileId,
+      entry_count: parseInt(row[EMB_COL_ENTRY_COUNT - 1]) || 0,
+      download_url: driveFileId
+        ? 'https://drive.google.com/uc?export=download&id=' + driveFileId
+        : ''
     };
 
   } catch (err) {
     return {
       success: false,
-      error: 'Failed to read embeddings: ' + err.message
+      error: 'Failed to read embeddings version: ' + err.message,
+      error_code: 'server_error'
     };
   }
 }
 
 /**
- * Updates the embeddings store (called by the ML pipeline after retraining).
- * @param {Object} payload - The full embeddings object matching the schema.
+ * Updates the embeddings metadata after the ML pipeline uploads a new
+ * embeddings.json to Drive. Called by the pipeline (not the kiosk).
+ *
+ * @param {Object} payload - Metadata about the new embeddings.
+ * @param {number} payload.version - New version number.
+ * @param {string} payload.generated_at - ISO 8601 timestamp.
+ * @param {string} payload.model_version - Model identifier.
+ * @param {string} payload.drive_file_id - Google Drive file ID.
+ * @param {number} payload.entry_count - Number of entries in the file.
  * @returns {Object} Response object.
  */
-function handleUpdateEmbeddings(payload) {
-  if (!payload.embeddings) {
+function handleUpdateEmbeddingsMeta(payload) {
+  if (!payload.version || !payload.drive_file_id) {
     return {
       success: false,
-      error: 'embeddings object is required'
-    };
-  }
-
-  var embeddings = payload.embeddings;
-
-  // Validate schema
-  if (typeof embeddings.version === 'undefined' ||
-      typeof embeddings.generated_at === 'undefined' ||
-      typeof embeddings.model_version === 'undefined' ||
-      !Array.isArray(embeddings.entries)) {
-    return {
-      success: false,
-      error: 'Invalid embeddings schema. Required: version, generated_at, model_version, entries[]'
+      error: 'version and drive_file_id are required',
+      error_code: 'validation_error'
     };
   }
 
@@ -102,25 +104,32 @@ function handleUpdateEmbeddings(payload) {
 
   try {
     var sheet = getSheet(config.ATTENDANCE_SHEET_ID, config.EMBEDDINGS_TAB);
-    var jsonString = JSON.stringify(embeddings);
 
-    // Clear and write: header in A1, JSON in A2
+    // Clear and write: header in row 1, data in row 2
     sheet.clear();
-    sheet.getRange(1, 1).setValue('embeddings_json');
-    sheet.getRange(2, 1).setValue(jsonString);
+    sheet.appendRow([
+      'version', 'generated_at', 'model_version', 'drive_file_id', 'entry_count'
+    ]);
+    sheet.appendRow([
+      parseInt(payload.version),
+      payload.generated_at || '',
+      payload.model_version || '',
+      payload.drive_file_id,
+      parseInt(payload.entry_count) || 0
+    ]);
     SpreadsheetApp.flush();
 
     return {
       success: true,
-      message: 'Embeddings updated',
-      version: embeddings.version,
-      entry_count: embeddings.entries.length
+      message: 'Embeddings metadata updated',
+      version: parseInt(payload.version)
     };
 
   } catch (err) {
     return {
       success: false,
-      error: 'Failed to update embeddings: ' + err.message
+      error: 'Failed to update embeddings metadata: ' + err.message,
+      error_code: 'server_error'
     };
   }
 }

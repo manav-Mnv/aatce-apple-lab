@@ -19,7 +19,8 @@ function handleEnroll(payload) {
   if (!payload.enrollment_no) {
     return {
       success: false,
-      error: 'enrollment_no is required'
+      error: 'enrollment_no is required',
+      error_code: 'validation_error'
     };
   }
 
@@ -56,7 +57,8 @@ function handleEnroll(payload) {
     if (!payload.name || !payload.email) {
       return {
         success: false,
-        error: 'name and email are required for new enrollment'
+        error: 'name and email are required for new enrollment',
+        error_code: 'validation_error'
       };
     }
 

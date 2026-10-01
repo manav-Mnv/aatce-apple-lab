@@ -2,10 +2,11 @@
  * Main.gs — Apps Script Web App entry points (doPost / doGet).
  *
  * Routes requests to the appropriate handler based on the 'action' parameter.
- * All requests must pass shared-secret authentication (FR-13).
+ * All requests must pass shared-secret authentication via X-Shared-Secret
+ * header (FR-13, NFR-4).
  *
- * POST actions: enroll, scan, update_embeddings
- * GET actions:  embeddings, status, attendance_log, students
+ * POST actions: enroll, scan, update_embeddings_meta
+ * GET actions:  embeddings_version, status, attendance_log, students
  */
 
 /**
@@ -15,10 +16,14 @@
  */
 function doPost(e) {
   try {
-    // Auth check (FR-13, NFR-4)
+    // Auth check (FR-13, NFR-4) — X-Shared-Secret header
     var auth = validateSecret(e);
     if (!auth.valid) {
-      return jsonResponse({ success: false, error: auth.error }, 401);
+      return jsonResponse({
+        success: false,
+        error: auth.error,
+        error_code: auth.error_code
+      });
     }
 
     // Parse JSON body
@@ -27,7 +32,11 @@ function doPost(e) {
       try {
         payload = JSON.parse(e.postData.contents);
       } catch (parseErr) {
-        return jsonResponse({ success: false, error: 'Invalid JSON body' }, 400);
+        return jsonResponse({
+          success: false,
+          error: 'Invalid JSON body',
+          error_code: 'invalid_json'
+        });
       }
     }
 
@@ -44,14 +53,15 @@ function doPost(e) {
         result = handleScan(payload);
         break;
 
-      case 'update_embeddings':
-        result = handleUpdateEmbeddings(payload);
+      case 'update_embeddings_meta':
+        result = handleUpdateEmbeddingsMeta(payload);
         break;
 
       default:
         result = {
           success: false,
-          error: 'Unknown action: ' + action + '. Valid POST actions: enroll, scan, update_embeddings'
+          error: 'Unknown action: ' + action + '. Valid POST actions: enroll, scan, update_embeddings_meta',
+          error_code: 'unknown_action'
         };
     }
 
@@ -60,8 +70,9 @@ function doPost(e) {
   } catch (err) {
     return jsonResponse({
       success: false,
-      error: 'Internal server error: ' + err.message
-    }, 500);
+      error: 'Internal server error: ' + err.message,
+      error_code: 'server_error'
+    });
   }
 }
 
@@ -72,18 +83,22 @@ function doPost(e) {
  */
 function doGet(e) {
   try {
-    // Auth check (FR-13, NFR-4)
+    // Auth check (FR-13, NFR-4) — X-Shared-Secret header
     var auth = validateSecret(e);
     if (!auth.valid) {
-      return jsonResponse({ success: false, error: auth.error }, 401);
+      return jsonResponse({
+        success: false,
+        error: auth.error,
+        error_code: auth.error_code
+      });
     }
 
     var action = (e && e.parameter && e.parameter.action) || '';
     var result;
 
     switch (action) {
-      case 'embeddings':
-        result = handleGetEmbeddings();
+      case 'embeddings_version':
+        result = handleGetEmbeddingsVersion();
         break;
 
       case 'status':
@@ -101,7 +116,8 @@ function doGet(e) {
       default:
         result = {
           success: false,
-          error: 'Unknown action: ' + action + '. Valid GET actions: embeddings, status, attendance_log, students'
+          error: 'Unknown action: ' + action + '. Valid GET actions: embeddings_version, status, attendance_log, students',
+          error_code: 'unknown_action'
         };
     }
 
@@ -110,8 +126,9 @@ function doGet(e) {
   } catch (err) {
     return jsonResponse({
       success: false,
-      error: 'Internal server error: ' + err.message
-    }, 500);
+      error: 'Internal server error: ' + err.message,
+      error_code: 'server_error'
+    });
   }
 }
 
@@ -141,7 +158,7 @@ function handleGetAttendanceLog(params) {
   var data = getAllData(sheet);
 
   if (data.length <= 1) {
-    return { success: true, entries: [] };
+    return { success: true, entries: [], count: 0 };
   }
 
   var entries = [];
@@ -203,7 +220,7 @@ function handleGetStudents(params) {
   var data = getAllData(sheet);
 
   if (data.length <= 1) {
-    return { success: true, students: [] };
+    return { success: true, students: [], count: 0 };
   }
 
   var students = [];

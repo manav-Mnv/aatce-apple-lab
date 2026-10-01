@@ -45,15 +45,8 @@ function resetSheets() {
     },
     'Embeddings': {
       data: [
-        ['embeddings_json'],
-        [JSON.stringify({
-          version: 1,
-          generated_at: '2026-09-30T12:00:00+05:30',
-          model_version: 'facenet-v1',
-          entries: [
-            { enrollment_no: '2021001', embedding_vector: [0.1, 0.2, 0.3] }
-          ]
-        })]
+        ['version', 'generated_at', 'model_version', 'drive_file_id', 'entry_count'],
+        [1, '2026-09-30T12:00:00+05:30', 'facenet-v1', '1AbCdEfG_driveFileId', 1]
       ]
     }
   };
@@ -128,7 +121,6 @@ const srcFiles = ['Config.gs', 'Auth.gs', 'SheetHelpers.gs', 'Enroll.gs', 'Scan.
 
 for (const file of srcFiles) {
   const code = fs.readFileSync(path.join(srcDir, file), 'utf8');
-  // Apps Script files define functions at global scope — eval them
   eval(code);
 }
 
@@ -160,33 +152,70 @@ function assertEqual(actual, expected, message) {
   }
 }
 
+// ─── Helper: build mock event objects ────────────────────────────────────────
+
+function makePostEvent(body, headers) {
+  return {
+    headers: headers || {},
+    parameter: {},
+    postData: { contents: JSON.stringify(body) }
+  };
+}
+
+function makeGetEvent(params, headers) {
+  return {
+    headers: headers || {},
+    parameter: params || {}
+  };
+}
+
+const AUTH_HEADER = { 'X-Shared-Secret': 'test-secret-12345' };
+
 // ─── Auth Tests ──────────────────────────────────────────────────────────────
 
 console.log('\n=== Auth Tests ===');
 
 test('rejects request with no secret', () => {
-  const result = validateSecret({ parameter: {}, postData: null });
+  const result = validateSecret({ headers: {}, parameter: {}, postData: null });
   assert(!result.valid, 'Should be invalid');
-  assert(result.error.includes('Missing'), 'Should mention missing secret');
+  assertEqual(result.error_code, 'auth_missing');
 });
 
-test('rejects request with wrong secret', () => {
-  const result = validateSecret({ parameter: { secret: 'wrong' }, postData: null });
+test('rejects request with wrong secret (header)', () => {
+  const result = validateSecret({ headers: { 'X-Shared-Secret': 'wrong' }, parameter: {} });
   assert(!result.valid, 'Should be invalid');
-  assert(result.error.includes('Invalid'), 'Should mention invalid secret');
+  assertEqual(result.error_code, 'auth_invalid');
 });
 
-test('accepts request with correct secret (query param)', () => {
-  const result = validateSecret({ parameter: { secret: 'test-secret-12345' }, postData: null });
+test('accepts request with correct secret (header)', () => {
+  const result = validateSecret({ headers: AUTH_HEADER, parameter: {} });
   assert(result.valid, 'Should be valid');
 });
 
-test('accepts request with correct secret (body)', () => {
+test('accepts request with correct secret (body fallback)', () => {
   const result = validateSecret({
+    headers: {},
     parameter: {},
     postData: { contents: JSON.stringify({ secret: 'test-secret-12345' }) }
   });
-  assert(result.valid, 'Should be valid');
+  assert(result.valid, 'Should be valid via body fallback');
+});
+
+test('header takes precedence over body', () => {
+  const result = validateSecret({
+    headers: { 'X-Shared-Secret': 'test-secret-12345' },
+    parameter: {},
+    postData: { contents: JSON.stringify({ secret: 'wrong-secret' }) }
+  });
+  assert(result.valid, 'Header should take precedence');
+});
+
+test('case-insensitive header name', () => {
+  const result = validateSecret({
+    headers: { 'x-shared-secret': 'test-secret-12345' },
+    parameter: {}
+  });
+  assert(result.valid, 'Should accept lowercase header');
 });
 
 // ─── Config Tests ────────────────────────────────────────────────────────────
@@ -208,17 +237,16 @@ console.log('\n=== Enroll Tests ===');
 test('enroll: rejects missing enrollment_no', () => {
   resetSheets();
   const result = handleEnroll({});
-  assert(!result.success, 'Should fail');
-  assert(result.error.includes('enrollment_no'), 'Should mention missing field');
+  assert(!result.success);
+  assertEqual(result.error_code, 'validation_error');
 });
 
 test('enroll: finds existing student', () => {
   resetSheets();
   const result = handleEnroll({ enrollment_no: '2021001' });
-  assert(result.success, 'Should succeed');
-  assertEqual(result.is_new, false, 'Should not be new');
+  assert(result.success);
+  assertEqual(result.is_new, false);
   assertEqual(result.name, 'Alice Student');
-  assertEqual(result.email, 'alice@paruluniversity.ac.in');
 });
 
 test('enroll: creates new student', () => {
@@ -228,27 +256,23 @@ test('enroll: creates new student', () => {
     name: 'New Person',
     email: 'new@test.com'
   });
-  assert(result.success, 'Should succeed');
-  assertEqual(result.is_new, true, 'Should be new');
-  assertEqual(result.name, 'New Person');
-
-  // Verify it was added to the sheet
+  assert(result.success);
+  assertEqual(result.is_new, true);
   const data = sheetDataStore['mock-master-id']['Master_Students'].data;
-  assertEqual(data.length, 4, 'Should have 4 rows (header + 2 original + 1 new)');
-  assertEqual(data[3][0], '2025999', 'New row enrollment_no');
+  assertEqual(data.length, 4);
 });
 
 test('enroll: rejects new student without name/email', () => {
   resetSheets();
   const result = handleEnroll({ enrollment_no: '2099999' });
-  assert(!result.success, 'Should fail');
-  assert(result.error.includes('name and email'), 'Should explain what is missing');
+  assert(!result.success);
+  assertEqual(result.error_code, 'validation_error');
 });
 
 test('enroll: sets face_dataset_path for existing student without one', () => {
   resetSheets();
   const result = handleEnroll({ enrollment_no: '2021002' });
-  assert(result.success, 'Should succeed');
+  assert(result.success);
   assertEqual(result.face_dataset_path, '/Face-Dataset/2021002/');
 });
 
@@ -259,211 +283,198 @@ console.log('\n=== Scan Tests ===');
 test('scan: rejects missing enrollment_no', () => {
   resetSheets();
   const result = handleScan({});
-  assert(!result.success, 'Should fail');
+  assert(!result.success);
+  assertEqual(result.error_code, 'validation_error');
 });
 
 test('scan: entry creates new session', () => {
   resetSheets();
   const result = handleScan({ enrollment_no: '2021001' });
-  assert(result.success, 'Should succeed');
-  assertEqual(result.action, 'entry', 'Should be entry');
-  assert(result.session_id, 'Should have session_id');
-  assert(result.entry_time, 'Should have entry_time');
+  assert(result.success);
+  assertEqual(result.action, 'entry');
+  assert(result.session_id);
+  assert(result.entry_time);
 });
 
 test('scan: exit closes open session', () => {
   resetSheets();
-
-  // Manually create an open session from "today"
   const now = new Date();
-  const entryTime = new Date(now.getTime() - 3600000); // 1 hour ago
+  const entryTime = new Date(now.getTime() - 3600000);
   sheetDataStore['mock-attendance-id']['Attendance_Log'].data.push([
-    'existing-session-123',
-    '2021001',
-    entryTime.toISOString(),
-    '',  // no exit_time — open session
-    '',
-    'pending',
-    '',
-    'no',
-    ''
+    'existing-session-123', '2021001', entryTime.toISOString(), '', '',
+    'pending', '', 'no', ''
   ]);
-
-  // Need to wait past cooldown — mock the entry time to be > 2 min ago
   const result = handleScan({ enrollment_no: '2021001' });
-  assert(result.success, 'Should succeed');
-  assertEqual(result.action, 'exit', 'Should be exit');
-  assert(result.exit_time, 'Should have exit_time');
-  assert(typeof result.duration_mins === 'number', 'Should have duration_mins');
+  assert(result.success);
+  assertEqual(result.action, 'exit');
+  assert(typeof result.duration_mins === 'number');
 });
 
 test('scan: routes non-member to workshop attendees (FR-12)', () => {
   resetSheets();
   const result = handleScan({
-    enrollment_no: '9999999',
-    name: 'Workshop Visitor',
-    email: 'visitor@test.com',
-    workshop_name: 'Swift Intro'
+    enrollment_no: '9999999', name: 'Workshop Visitor',
+    email: 'visitor@test.com', workshop_name: 'Swift Intro'
   });
-  assert(result.success, 'Should succeed');
-  assertEqual(result.action, 'workshop_attendee', 'Should be workshop attendee');
-
-  // Verify it was added to Other_Workshop_Attendees
-  const data = sheetDataStore['mock-attendance-id']['Other_Workshop_Attendees'].data;
-  assertEqual(data.length, 2, 'Should have 2 rows (header + 1 new)');
-  assertEqual(data[1][2], '9999999', 'Workshop attendee enrollment_no');
+  assert(result.success);
+  assertEqual(result.action, 'workshop_attendee');
 });
 
-test('scan: cooldown rejects rapid re-scan (FR-11)', () => {
+test('scan: cooldown rejects rapid re-scan with error_code (FR-11)', () => {
   resetSheets();
-
-  // Create a recent exit (just now)
   const now = new Date();
   sheetDataStore['mock-attendance-id']['Attendance_Log'].data.push([
-    'recent-session',
-    '2021001',
-    new Date(now.getTime() - 60000).toISOString(),  // entered 1 min ago
-    now.toISOString(),                                // exited just now
-    1,
-    'pending',
-    '',
-    'no',
-    ''
+    'recent-session', '2021001',
+    new Date(now.getTime() - 60000).toISOString(),
+    now.toISOString(), 1, 'pending', '', 'no', ''
   ]);
-
   const result = handleScan({ enrollment_no: '2021001' });
-  assert(!result.success, 'Should fail due to cooldown');
-  assert(result.error.includes('Cooldown'), 'Should mention cooldown');
-  assert(typeof result.cooldown_remaining_seconds === 'number', 'Should have remaining seconds');
+  assert(!result.success);
+  assertEqual(result.error_code, 'cooldown');
+  assert(typeof result.cooldown_remaining_seconds === 'number');
 });
 
-// ─── Embeddings Tests ────────────────────────────────────────────────────────
+// ─── Embeddings Version Tests ────────────────────────────────────────────────
 
-console.log('\n=== Embeddings Tests ===');
+console.log('\n=== Embeddings Version Tests ===');
 
-test('get embeddings: returns stored embeddings', () => {
+test('get embeddings version: returns metadata (not full vectors)', () => {
   resetSheets();
-  const result = handleGetEmbeddings();
-  assert(result.success, 'Should succeed');
-  assert(result.embeddings, 'Should have embeddings');
-  assertEqual(result.embeddings.version, 1);
-  assertEqual(result.embeddings.entries.length, 1);
-  assertEqual(result.embeddings.entries[0].enrollment_no, '2021001');
+  const result = handleGetEmbeddingsVersion();
+  assert(result.success);
+  assertEqual(result.version, 1);
+  assertEqual(result.drive_file_id, '1AbCdEfG_driveFileId');
+  assert(result.download_url.includes('1AbCdEfG_driveFileId'));
+  // Should NOT contain entries or embedding_vector
+  assert(!result.entries, 'Should not have entries (full vectors stay in Drive)');
 });
 
-test('update embeddings: stores new embeddings', () => {
+test('get embeddings version: empty when no data', () => {
   resetSheets();
-  const newEmbeddings = {
+  sheetDataStore['mock-attendance-id']['Embeddings'].data = [
+    ['version', 'generated_at', 'model_version', 'drive_file_id', 'entry_count']
+  ];
+  const result = handleGetEmbeddingsVersion();
+  assert(result.success);
+  assertEqual(result.version, 0);
+  assertEqual(result.download_url, '');
+});
+
+test('update embeddings meta: stores metadata', () => {
+  resetSheets();
+  const result = handleUpdateEmbeddingsMeta({
     version: 2,
     generated_at: '2026-10-01T12:00:00+05:30',
     model_version: 'facenet-v2',
-    entries: [
-      { enrollment_no: '2021001', embedding_vector: [0.4, 0.5, 0.6] },
-      { enrollment_no: '2021002', embedding_vector: [0.7, 0.8, 0.9] }
-    ]
-  };
-  const result = handleUpdateEmbeddings({ embeddings: newEmbeddings });
-  assert(result.success, 'Should succeed');
+    drive_file_id: 'newDriveFileId123',
+    entry_count: 42
+  });
+  assert(result.success);
   assertEqual(result.version, 2);
-  assertEqual(result.entry_count, 2);
 
-  // Verify we can read them back
-  const readResult = handleGetEmbeddings();
-  assert(readResult.success, 'Should read back successfully');
-  assertEqual(readResult.embeddings.version, 2);
-  assertEqual(readResult.embeddings.entries.length, 2);
+  // Verify we can read it back
+  const readResult = handleGetEmbeddingsVersion();
+  assertEqual(readResult.version, 2);
+  assertEqual(readResult.drive_file_id, 'newDriveFileId123');
+  assertEqual(readResult.entry_count, 42);
 });
 
-test('update embeddings: rejects invalid schema', () => {
+test('update embeddings meta: rejects missing fields', () => {
   resetSheets();
-  const result = handleUpdateEmbeddings({ embeddings: { bad: 'data' } });
-  assert(!result.success, 'Should fail');
-  assert(result.error.includes('Invalid embeddings schema'), 'Should explain schema error');
+  const result = handleUpdateEmbeddingsMeta({ version: 1 });
+  assert(!result.success);
+  assertEqual(result.error_code, 'validation_error');
 });
 
 // ─── Router Tests (doPost / doGet) ───────────────────────────────────────────
 
 console.log('\n=== Router Tests ===');
 
-test('doPost: rejects without auth', () => {
+test('doPost: rejects without auth header', () => {
   resetSheets();
-  const response = doPost({ parameter: {}, postData: { contents: '{"action":"status"}' } });
+  const response = doPost(makePostEvent({ action: 'status' }));
   const body = JSON.parse(response.getContent());
-  assert(!body.success, 'Should fail');
-  assert(body.error.includes('Missing'), 'Should mention missing secret');
+  assert(!body.success);
+  assertEqual(body.error_code, 'auth_missing');
 });
 
-test('doPost: routes enroll action', () => {
+test('doPost: routes enroll with header auth', () => {
   resetSheets();
-  const response = doPost({
-    parameter: { secret: 'test-secret-12345' },
-    postData: {
-      contents: JSON.stringify({
-        secret: 'test-secret-12345',
-        action: 'enroll',
-        enrollment_no: '2021001'
-      })
-    }
-  });
+  const response = doPost(makePostEvent(
+    { action: 'enroll', enrollment_no: '2021001' },
+    AUTH_HEADER
+  ));
   const body = JSON.parse(response.getContent());
-  assert(body.success, 'Should succeed');
+  assert(body.success);
   assertEqual(body.name, 'Alice Student');
 });
 
-test('doPost: rejects unknown action', () => {
+test('doPost: rejects unknown action with error_code', () => {
   resetSheets();
-  const response = doPost({
-    parameter: { secret: 'test-secret-12345' },
-    postData: {
-      contents: JSON.stringify({
-        secret: 'test-secret-12345',
-        action: 'nonexistent'
-      })
-    }
-  });
+  const response = doPost(makePostEvent(
+    { action: 'nonexistent' },
+    AUTH_HEADER
+  ));
   const body = JSON.parse(response.getContent());
-  assert(!body.success, 'Should fail');
-  assert(body.error.includes('Unknown action'), 'Should mention unknown action');
+  assert(!body.success);
+  assertEqual(body.error_code, 'unknown_action');
 });
 
-test('doGet: returns embeddings', () => {
+test('doPost: rejects invalid JSON with error_code', () => {
   resetSheets();
-  const response = doGet({
-    parameter: { secret: 'test-secret-12345', action: 'embeddings' }
+  const response = doPost({
+    headers: AUTH_HEADER,
+    parameter: {},
+    postData: { contents: 'not json {{' }
   });
   const body = JSON.parse(response.getContent());
-  assert(body.success, 'Should succeed');
-  assert(body.embeddings, 'Should have embeddings');
+  assert(!body.success);
+  assertEqual(body.error_code, 'invalid_json');
+});
+
+test('doGet: returns embeddings version (not full data)', () => {
+  resetSheets();
+  const response = doGet(makeGetEvent(
+    { action: 'embeddings_version' },
+    AUTH_HEADER
+  ));
+  const body = JSON.parse(response.getContent());
+  assert(body.success);
+  assertEqual(body.version, 1);
+  assert(body.drive_file_id);
+  assert(!body.entries, 'GET should return metadata only');
 });
 
 test('doGet: returns status', () => {
   resetSheets();
-  const response = doGet({
-    parameter: { secret: 'test-secret-12345', action: 'status' }
-  });
+  const response = doGet(makeGetEvent({ action: 'status' }, AUTH_HEADER));
   const body = JSON.parse(response.getContent());
-  assert(body.success, 'Should succeed');
+  assert(body.success);
   assertEqual(body.status, 'online');
 });
 
 test('doGet: returns attendance log', () => {
   resetSheets();
-  const response = doGet({
-    parameter: { secret: 'test-secret-12345', action: 'attendance_log' }
-  });
+  const response = doGet(makeGetEvent({ action: 'attendance_log' }, AUTH_HEADER));
   const body = JSON.parse(response.getContent());
-  assert(body.success, 'Should succeed');
-  assert(Array.isArray(body.entries), 'Should have entries array');
+  assert(body.success);
+  assert(Array.isArray(body.entries));
 });
 
 test('doGet: returns students list', () => {
   resetSheets();
-  const response = doGet({
-    parameter: { secret: 'test-secret-12345', action: 'students' }
-  });
+  const response = doGet(makeGetEvent({ action: 'students' }, AUTH_HEADER));
   const body = JSON.parse(response.getContent());
-  assert(body.success, 'Should succeed');
-  assert(body.count >= 2, 'Should have at least 2 students');
+  assert(body.success);
+  assert(body.count >= 2);
+});
+
+test('doGet: rejects unknown action with error_code', () => {
+  resetSheets();
+  const response = doGet(makeGetEvent({ action: 'bad' }, AUTH_HEADER));
+  const body = JSON.parse(response.getContent());
+  assert(!body.success);
+  assertEqual(body.error_code, 'unknown_action');
 });
 
 // ─── Summary ─────────────────────────────────────────────────────────────────

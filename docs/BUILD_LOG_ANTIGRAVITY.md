@@ -3,17 +3,18 @@
 
 ---
 
-## 🔍 Summary (as of 2026-10-02T02:52 IST)
+## 🔍 Summary (as of 2026-10-02T03:10 IST)
 
 ### ✅ What's Working & Committed
 
 | Commit | Component | What Works |
 |---|---|---|
 | `9e04fff` | **Backend (Phase 1)** | Full Apps Script web app: `doPost`/`doGet` router, `/enroll` (FR-1–6), `/scan` with entry/exit/cooldown/workshop routing (FR-7–12), `/embeddings` sync, shared-secret auth (NFR-4), LockService writes (PRD §8), read endpoints for admin portal (FR-20). 25/25 tests pass. API contract documented. |
-| *(pending)* | **ML Training (Phase 4)** | Full embedding pipeline: dataset loader, FaceNet embedding generator, pipeline orchestrator with auto-versioning, `embeddings.json` schema exactly matching SRS §6. GitHub Actions weekly retrain workflow. 48/48 tests pass. |
+| `544a5d4` | **ML Training (Phase 4)** | Full embedding pipeline: dataset loader, FaceNet embedding generator, pipeline orchestrator with auto-versioning, `embeddings.json` schema exactly matching SRS §6. GitHub Actions weekly retrain workflow. 48/48 tests pass. |
+| *(pending)* | **Backend Fixes** | Switched to `X-Shared-Secret` header auth, changed embeddings to use Drive architecture (serving metadata only from Apps Script), and added `error_code` to error responses. Updated tests and API contract. 30/30 tests pass. |
 
 ### 🔎 What to Check First
-1. **`backend/API_CONTRACT.md`** — the other agent needs these endpoint shapes for the kiosk app
+1. **`backend/API_CONTRACT.md`** — the other agent needs these endpoint shapes for the kiosk app. Now updated with header auth and Drive-based embeddings flow.
 2. **`ml-training/output/embeddings.json`** — will be generated once real face images exist in `Face-Dataset/`
 3. **CI updated** — backend tests run via Node.js, ML tests run via pytest, retrain workflow added
 
@@ -108,3 +109,11 @@ Session start: 2026-10-02T02:39+05:30 (autonomous build, phases 1 & 4 per SRS §
 **Result:** SUCCESS
 **Details:** Created `.github/workflows/retrain.yml` (weekly cron, pip cache, artifact upload, auto-commit). Updated README.md with actual architecture and usage.
 
+## [2026-10-02T03:10] Backend — API Contract Fixes (Auth, Embeddings, Error Codes)
+**Why:** Addressed user feedback regarding NFR-4 (header-based auth), FR-21/22 (Drive-based embeddings architecture), and structured error codes.
+**Result:** SUCCESS
+**Details:**
+- **Header Auth:** Switched `Auth.gs` to require `X-Shared-Secret` header, with a fallback for Apps Script body payload limitations.
+- **Drive-based Embeddings:** Updated `Embeddings.gs` to stop receiving/serving the entire embeddings payload. It now only receives version metadata from the ML pipeline and provides a download URL pointing to the Drive file for the kiosk.
+- **Error Codes:** Added standard machine-readable `error_code` strings to failure responses across `Enroll.gs`, `Scan.gs`, `Main.gs`, and `Auth.gs`.
+- **Tests & Docs:** Updated `test_backend.js` (now 30 tests, all passing) and completely revised `API_CONTRACT.md` (v1.1.0) to document these changes.

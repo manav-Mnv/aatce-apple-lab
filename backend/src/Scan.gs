@@ -21,7 +21,8 @@ function handleScan(payload) {
   if (!payload.enrollment_no) {
     return {
       success: false,
-      error: 'enrollment_no is required'
+      error: 'enrollment_no is required',
+      error_code: 'validation_error'
     };
   }
 
@@ -95,6 +96,7 @@ function handleScan(payload) {
       return {
         success: false,
         error: 'Cooldown active. Please wait ' + remainingSec + ' seconds.',
+        error_code: 'cooldown',
         cooldown_remaining_seconds: remainingSec
       };
     }
