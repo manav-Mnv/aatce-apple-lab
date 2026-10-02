@@ -1,12 +1,13 @@
 /**
- * Main.gs — Apps Script Web App entry points (doPost / doGet).
+ * Main.gs — Apps Script Web App entry points (doPost).
  *
  * Routes requests to the appropriate handler based on the 'action' parameter.
- * All requests must pass shared-secret authentication via X-Shared-Secret
- * header (FR-13, NFR-4).
+ * Due to Apps Script limitations where custom headers are not passed to event
+ * objects, ALL requests must be sent as POST requests with a JSON body
+ * containing the shared secret and action.
  *
- * POST actions: enroll, scan, update_embeddings_meta
- * GET actions:  embeddings_version, status, attendance_log, students
+ * POST actions: enroll, scan, update_embeddings_meta, embeddings_version, status, attendance_log, students
+ * GET actions:  (disabled - return 405 Method Not Allowed)
  */
 
 /**
@@ -16,7 +17,7 @@
  */
 function doPost(e) {
   try {
-    // Auth check (FR-13, NFR-4) — X-Shared-Secret header
+    // Auth check (FR-13, NFR-4) — JSON body 'secret'
     var auth = validateSecret(e);
     if (!auth.valid) {
       return jsonResponse({
@@ -57,10 +58,26 @@ function doPost(e) {
         result = handleUpdateEmbeddingsMeta(payload);
         break;
 
+      case 'embeddings_version':
+        result = handleGetEmbeddingsVersion();
+        break;
+
+      case 'status':
+        result = handleStatus();
+        break;
+
+      case 'attendance_log':
+        result = handleGetAttendanceLog(payload);
+        break;
+
+      case 'students':
+        result = handleGetStudents(payload);
+        break;
+
       default:
         result = {
           success: false,
-          error: 'Unknown action: ' + action + '. Valid POST actions: enroll, scan, update_embeddings_meta',
+          error: 'Unknown action: ' + action + '. Valid POST actions: enroll, scan, update_embeddings_meta, embeddings_version, status, attendance_log, students',
           error_code: 'unknown_action'
         };
     }
@@ -78,58 +95,17 @@ function doPost(e) {
 
 /**
  * Handles HTTP GET requests.
+ * Disabled because GET requests cannot securely pass the shared secret
+ * without putting it in the URL (which leaks into logs).
  * @param {GoogleAppsScript.Events.DoGet} e - The GET event.
  * @returns {GoogleAppsScript.Content.TextOutput}
  */
 function doGet(e) {
-  try {
-    // Auth check (FR-13, NFR-4) — X-Shared-Secret header
-    var auth = validateSecret(e);
-    if (!auth.valid) {
-      return jsonResponse({
-        success: false,
-        error: auth.error,
-        error_code: auth.error_code
-      });
-    }
-
-    var action = (e && e.parameter && e.parameter.action) || '';
-    var result;
-
-    switch (action) {
-      case 'embeddings_version':
-        result = handleGetEmbeddingsVersion();
-        break;
-
-      case 'status':
-        result = handleStatus();
-        break;
-
-      case 'attendance_log':
-        result = handleGetAttendanceLog(e.parameter);
-        break;
-
-      case 'students':
-        result = handleGetStudents(e.parameter);
-        break;
-
-      default:
-        result = {
-          success: false,
-          error: 'Unknown action: ' + action + '. Valid GET actions: embeddings_version, status, attendance_log, students',
-          error_code: 'unknown_action'
-        };
-    }
-
-    return jsonResponse(result);
-
-  } catch (err) {
-    return jsonResponse({
-      success: false,
-      error: 'Internal server error: ' + err.message,
-      error_code: 'server_error'
-    });
-  }
+  return jsonResponse({
+    success: false,
+    error: 'GET requests are not supported. Please use POST with JSON body containing the secret.',
+    error_code: 'method_not_allowed'
+  });
 }
 
 // ─── Read-only endpoints (for Admin Portal, FR-20) ────────────────────────────
@@ -148,7 +124,7 @@ function handleStatus() {
 
 /**
  * Returns attendance log entries, optionally filtered by date or enrollment_no.
- * @param {Object} params - Query parameters.
+ * @param {Object} params - Query parameters from POST payload.
  * @param {string} [params.date] - Filter by date (YYYY-MM-DD).
  * @param {string} [params.enrollment_no] - Filter by enrollment number.
  */
@@ -210,7 +186,7 @@ function handleGetAttendanceLog(params) {
 
 /**
  * Returns the student roster from Master_Students, optionally filtered.
- * @param {Object} params - Query parameters.
+ * @param {Object} params - Query parameters from POST payload.
  * @param {string} [params.batch] - Filter by batch tag.
  * @param {string} [params.enrollment_no] - Filter by specific enrollment number.
  */

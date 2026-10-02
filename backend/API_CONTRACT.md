@@ -1,34 +1,29 @@
 # API Contract — AATCE Backend (Apps Script Web App)
 
-> **Version:** 1.1.0  
+> **Version:** 1.2.0  
 > **Base URL:** `https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec`  
-> **Auth:** `X-Shared-Secret` header on every request (see Authentication below)
+> **Auth:** JSON body `secret` on every request (see Authentication below)
+> **Methods:** POST only (GET is disabled)
 
 ---
 
 ## Authentication (FR-13, NFR-4)
 
-Every request must include the shared secret via the `X-Shared-Secret` HTTP header:
+Due to Google Apps Script platform limitations, custom HTTP headers (like `X-Shared-Secret`) are not exposed to the `doPost` or `doGet` event objects in deployed web apps. 
 
-```
-X-Shared-Secret: <YOUR_SECRET>
-```
+To ensure the secret is not logged in URL query parameters (which appear in server logs and browser history), **all requests must be sent as HTTP POST** with the secret embedded directly in the JSON body payload.
 
-**Example (curl):**
-```bash
-curl -H "X-Shared-Secret: $SECRET" \
-     "https://script.google.com/macros/s/.../exec?action=status"
+**Example:**
+```json
+{
+  "secret": "<YOUR_SECRET>",
+  "action": "status"
+}
 ```
-
-> **Apps Script limitation:** Google Apps Script web apps do not expose custom
-> request headers in the `doPost`/`doGet` event object. As a workaround, the
-> backend also accepts the secret in the POST body `{ "secret": "..." }`.
-> Callers should always send the header; the body fallback exists only for
-> compatibility with the Apps Script platform.
 
 **Error responses:**
 ```json
-{ "success": false, "error": "Missing authentication: send X-Shared-Secret header", "error_code": "auth_missing" }
+{ "success": false, "error": "Missing authentication: include \"secret\" in JSON body", "error_code": "auth_missing" }
 { "success": false, "error": "Invalid authentication secret", "error_code": "auth_invalid" }
 ```
 
@@ -56,17 +51,18 @@ All errors include a machine-readable `error_code` so callers can branch without
 | `unknown_action` | Unrecognized `action` parameter | 400 |
 | `invalid_json` | POST body is not valid JSON | 400 |
 | `server_error` | Internal server error | 500 |
+| `method_not_allowed` | Request sent via GET instead of POST | 405 |
 
 ---
 
-## POST Endpoints
+## Endpoints (All POST)
 
 ### `POST /exec` — Enroll (FR-1 through FR-6)
 
-**Headers:** `X-Shared-Secret: <secret>`  
 **Body:**
 ```json
 {
+  "secret": "<secret>",
   "action": "enroll",
   "enrollment_no": "2021001",
   "name": "Alice Student",
@@ -107,10 +103,10 @@ All errors include a machine-readable `error_code` so callers can branch without
 
 ### `POST /exec` — Scan (FR-7 through FR-12)
 
-**Headers:** `X-Shared-Secret: <secret>`  
 **Body:**
 ```json
 {
+  "secret": "<secret>",
   "action": "scan",
   "enrollment_no": "2021001"
 }
@@ -166,10 +162,10 @@ All errors include a machine-readable `error_code` so callers can branch without
 
 ### `POST /exec` — Update Embeddings Metadata
 
-**Headers:** `X-Shared-Secret: <secret>`  
 **Body:**
 ```json
 {
+  "secret": "<secret>",
   "action": "update_embeddings_meta",
   "version": 2,
   "generated_at": "2026-10-01T12:00:00+05:30",
@@ -191,16 +187,20 @@ Called by the ML pipeline after uploading `embeddings.json` to Drive.
 
 ---
 
-## GET Endpoints
-
-### `GET /exec?action=embeddings_version` — Embeddings Version Check
-
-**Headers:** `X-Shared-Secret: <secret>`
+### `POST /exec` — Embeddings Version Check
 
 The kiosk calls this to check whether a newer `embeddings.json` is available.
 If `version > local_version`, the kiosk downloads the file directly from Drive
 using `download_url`. The full embedding vectors are **never** routed through
 Apps Script (NFR-7).
+
+**Body:**
+```json
+{
+  "secret": "<secret>",
+  "action": "embeddings_version"
+}
+```
 
 **Response:**
 ```json
@@ -217,9 +217,15 @@ Apps Script (NFR-7).
 
 ---
 
-### `GET /exec?action=status` — Health Check
+### `POST /exec` — Health Check
 
-**Headers:** `X-Shared-Secret: <secret>`
+**Body:**
+```json
+{
+  "secret": "<secret>",
+  "action": "status"
+}
+```
 
 **Response:**
 ```json
@@ -233,10 +239,18 @@ Apps Script (NFR-7).
 
 ---
 
-### `GET /exec?action=attendance_log` — Attendance Log (FR-20)
+### `POST /exec` — Attendance Log (FR-20)
 
-**Headers:** `X-Shared-Secret: <secret>`  
-**Optional filters:** `&date=2026-10-01` `&enrollment_no=2021001`
+**Body:**
+```json
+{
+  "secret": "<secret>",
+  "action": "attendance_log",
+  "date": "2026-10-01",
+  "enrollment_no": "2021001"
+}
+```
+(Both `date` and `enrollment_no` are optional filters)
 
 **Response:**
 ```json
@@ -261,10 +275,18 @@ Apps Script (NFR-7).
 
 ---
 
-### `GET /exec?action=students` — Student Roster (FR-20)
+### `POST /exec` — Student Roster (FR-20)
 
-**Headers:** `X-Shared-Secret: <secret>`  
-**Optional filters:** `&batch=SCC/5-7` `&enrollment_no=2021001`
+**Body:**
+```json
+{
+  "secret": "<secret>",
+  "action": "students",
+  "batch": "SCC/5-7",
+  "enrollment_no": "2021001"
+}
+```
+(Both `batch` and `enrollment_no` are optional filters)
 
 **Response:**
 ```json
@@ -300,7 +322,7 @@ ML Pipeline (GitHub Actions)
   stores: version, drive_file_id            stores: embeddings.json
        │                                           │
        v                                           v
-  Kiosk: GET embeddings_version ──► if new ──► download from Drive
+  Kiosk: POST embeddings_version ──► if new ──► download from Drive
 ```
 
 **embeddings.json schema** (stored in Drive, generated by ML pipeline):

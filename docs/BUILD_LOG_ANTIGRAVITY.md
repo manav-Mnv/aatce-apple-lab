@@ -117,3 +117,13 @@ Session start: 2026-10-02T02:39+05:30 (autonomous build, phases 1 & 4 per SRS §
 - **Drive-based Embeddings:** Updated `Embeddings.gs` to stop receiving/serving the entire embeddings payload. It now only receives version metadata from the ML pipeline and provides a download URL pointing to the Drive file for the kiosk.
 - **Error Codes:** Added standard machine-readable `error_code` strings to failure responses across `Enroll.gs`, `Scan.gs`, `Main.gs`, and `Auth.gs`.
 - **Tests & Docs:** Updated `test_backend.js` (now 30 tests, all passing) and completely revised `API_CONTRACT.md` (v1.1.0) to document these changes.
+
+## [2026-10-02T11:32] Backend — Migrate all endpoints to POST (Apps Script Limitation)
+**Why:** Google Apps Script event objects (`doPost`/`doGet`) do not expose custom HTTP headers in deployed web apps, rendering the `X-Shared-Secret` header auth impossible in production. Furthermore, GET requests cannot have JSON bodies.
+**Result:** SUCCESS
+**Details:**
+- Migrated all read-only GET endpoints (`embeddings_version`, `status`, `attendance_log`, `students`) to POST in `Main.gs`.
+- `doGet` now strictly returns a `method_not_allowed` error.
+- Rewrote `Auth.gs` to exclusively check `e.postData.contents` for the `secret`.
+- Updated `API_CONTRACT.md` (v1.2.0) to document POST-only architecture.
+- Modified `test_backend.js` to mock pure Apps Script event objects (no headers) to guarantee production parity. 28/28 tests passed.

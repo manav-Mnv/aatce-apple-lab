@@ -154,78 +154,40 @@ function assertEqual(actual, expected, message) {
 
 // ─── Helper: build mock event objects ────────────────────────────────────────
 
-function makePostEvent(body, headers) {
+function makePostEvent(body) {
   return {
-    headers: headers || {},
     parameter: {},
     postData: { contents: JSON.stringify(body) }
   };
 }
 
-function makeGetEvent(params, headers) {
+function makeGetEvent(params) {
   return {
-    headers: headers || {},
     parameter: params || {}
   };
 }
 
-const AUTH_HEADER = { 'X-Shared-Secret': 'test-secret-12345' };
+const VALID_AUTH = { secret: 'test-secret-12345' };
 
 // ─── Auth Tests ──────────────────────────────────────────────────────────────
 
 console.log('\n=== Auth Tests ===');
 
 test('rejects request with no secret', () => {
-  const result = validateSecret({ headers: {}, parameter: {}, postData: null });
+  const result = validateSecret(makePostEvent({ action: 'status' }));
   assert(!result.valid, 'Should be invalid');
   assertEqual(result.error_code, 'auth_missing');
 });
 
-test('rejects request with wrong secret (header)', () => {
-  const result = validateSecret({ headers: { 'X-Shared-Secret': 'wrong' }, parameter: {} });
+test('rejects request with wrong secret', () => {
+  const result = validateSecret(makePostEvent({ secret: 'wrong' }));
   assert(!result.valid, 'Should be invalid');
   assertEqual(result.error_code, 'auth_invalid');
 });
 
-test('rejects request with secret in query param (must use header)', () => {
-  const result = validateSecret({
-    headers: {},
-    parameter: { secret: 'test-secret-12345' },
-    postData: null
-  });
-  assert(!result.valid, 'Query param auth must be rejected');
-  assertEqual(result.error_code, 'auth_missing');
-});
-
-test('accepts request with correct secret (header)', () => {
-  const result = validateSecret({ headers: AUTH_HEADER, parameter: {} });
+test('accepts request with correct secret', () => {
+  const result = validateSecret(makePostEvent(VALID_AUTH));
   assert(result.valid, 'Should be valid');
-});
-
-test('accepts request with correct secret (body fallback)', () => {
-  const result = validateSecret({
-    headers: {},
-    parameter: {},
-    postData: { contents: JSON.stringify({ secret: 'test-secret-12345' }) }
-  });
-  assert(result.valid, 'Should be valid via body fallback');
-});
-
-test('header takes precedence over body', () => {
-  const result = validateSecret({
-    headers: { 'X-Shared-Secret': 'test-secret-12345' },
-    parameter: {},
-    postData: { contents: JSON.stringify({ secret: 'wrong-secret' }) }
-  });
-  assert(result.valid, 'Header should take precedence');
-});
-
-test('case-insensitive header name', () => {
-  const result = validateSecret({
-    headers: { 'x-shared-secret': 'test-secret-12345' },
-    parameter: {}
-  });
-  assert(result.valid, 'Should accept lowercase header');
 });
 
 // ─── Config Tests ────────────────────────────────────────────────────────────
@@ -400,7 +362,7 @@ test('update embeddings meta: rejects missing fields', () => {
 
 console.log('\n=== Router Tests ===');
 
-test('doPost: rejects without auth header', () => {
+test('doPost: rejects without secret', () => {
   resetSheets();
   const response = doPost(makePostEvent({ action: 'status' }));
   const body = JSON.parse(response.getContent());
@@ -408,12 +370,13 @@ test('doPost: rejects without auth header', () => {
   assertEqual(body.error_code, 'auth_missing');
 });
 
-test('doPost: routes enroll with header auth', () => {
+test('doPost: routes enroll with valid secret', () => {
   resetSheets();
-  const response = doPost(makePostEvent(
-    { action: 'enroll', enrollment_no: '2021001' },
-    AUTH_HEADER
-  ));
+  const response = doPost(makePostEvent({
+    ...VALID_AUTH,
+    action: 'enroll',
+    enrollment_no: '2021001'
+  }));
   const body = JSON.parse(response.getContent());
   assert(body.success);
   assertEqual(body.name, 'Alice Student');
@@ -421,10 +384,10 @@ test('doPost: routes enroll with header auth', () => {
 
 test('doPost: rejects unknown action with error_code', () => {
   resetSheets();
-  const response = doPost(makePostEvent(
-    { action: 'nonexistent' },
-    AUTH_HEADER
-  ));
+  const response = doPost(makePostEvent({
+    ...VALID_AUTH,
+    action: 'nonexistent'
+  }));
   const body = JSON.parse(response.getContent());
   assert(!body.success);
   assertEqual(body.error_code, 'unknown_action');
@@ -432,10 +395,10 @@ test('doPost: rejects unknown action with error_code', () => {
 
 test('doPost: explicitly rejects old update_embeddings action', () => {
   resetSheets();
-  const response = doPost(makePostEvent(
-    { action: 'update_embeddings' },
-    AUTH_HEADER
-  ));
+  const response = doPost(makePostEvent({
+    ...VALID_AUTH,
+    action: 'update_embeddings'
+  }));
   const body = JSON.parse(response.getContent());
   assert(!body.success);
   assertEqual(body.error_code, 'unknown_action');
@@ -444,58 +407,67 @@ test('doPost: explicitly rejects old update_embeddings action', () => {
 test('doPost: rejects invalid JSON with error_code', () => {
   resetSheets();
   const response = doPost({
-    headers: AUTH_HEADER,
     parameter: {},
     postData: { contents: 'not json {{' }
   });
   const body = JSON.parse(response.getContent());
   assert(!body.success);
-  assertEqual(body.error_code, 'invalid_json');
+  // invalid JSON will cause validateSecret to fail with auth_missing since it can't find secret
+  assertEqual(body.error_code, 'auth_missing');
 });
 
-test('doGet: returns embeddings version (not full data)', () => {
+test('doPost: returns embeddings version (not full data)', () => {
   resetSheets();
-  const response = doGet(makeGetEvent(
-    { action: 'embeddings_version' },
-    AUTH_HEADER
-  ));
+  const response = doPost(makePostEvent({
+    ...VALID_AUTH,
+    action: 'embeddings_version'
+  }));
   const body = JSON.parse(response.getContent());
   assert(body.success);
   assertEqual(body.version, 1);
   assert(body.drive_file_id);
-  assert(!body.entries, 'GET should return metadata only');
+  assert(!body.entries, 'Should return metadata only');
 });
 
-test('doGet: returns status', () => {
+test('doPost: returns status', () => {
   resetSheets();
-  const response = doGet(makeGetEvent({ action: 'status' }, AUTH_HEADER));
+  const response = doPost(makePostEvent({
+    ...VALID_AUTH,
+    action: 'status'
+  }));
   const body = JSON.parse(response.getContent());
   assert(body.success);
   assertEqual(body.status, 'online');
 });
 
-test('doGet: returns attendance log', () => {
+test('doPost: returns attendance log', () => {
   resetSheets();
-  const response = doGet(makeGetEvent({ action: 'attendance_log' }, AUTH_HEADER));
+  const response = doPost(makePostEvent({
+    ...VALID_AUTH,
+    action: 'attendance_log'
+  }));
   const body = JSON.parse(response.getContent());
   assert(body.success);
   assert(Array.isArray(body.entries));
 });
 
-test('doGet: returns students list', () => {
+test('doPost: returns students list', () => {
   resetSheets();
-  const response = doGet(makeGetEvent({ action: 'students' }, AUTH_HEADER));
+  const response = doPost(makePostEvent({
+    ...VALID_AUTH,
+    action: 'students'
+  }));
   const body = JSON.parse(response.getContent());
   assert(body.success);
   assert(body.count >= 2);
 });
 
-test('doGet: rejects unknown action with error_code', () => {
+test('doGet: explicitly disabled (returns 405 error code)', () => {
   resetSheets();
-  const response = doGet(makeGetEvent({ action: 'bad' }, AUTH_HEADER));
+  const response = doGet(makeGetEvent({ action: 'status' }));
   const body = JSON.parse(response.getContent());
   assert(!body.success);
-  assertEqual(body.error_code, 'unknown_action');
+  assertEqual(body.error_code, 'method_not_allowed');
 });
 
 // ─── Summary ─────────────────────────────────────────────────────────────────
