@@ -12,8 +12,9 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build placeholder
-        run: echo "xcodebuild goes here when Xcode project is initialized"
+      - name: Run kiosk networking layer tests
+        run: swift test
+        working-directory: macos-app
 
   backend-build:
     name: Test Backend (Apps Script)
