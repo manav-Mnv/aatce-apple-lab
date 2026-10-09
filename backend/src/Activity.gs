@@ -75,7 +75,10 @@ function closeStaleSessions() {
 function sendActivityEmail_(session, person, durationMins) {
   if (!isEmail_(person.email)) return false;
   try {
-    var link = ScriptApp.getService().getUrl() + '?session=' + encodeURIComponent(session.session_id);
+    // WEB_APP_URL is the public /exec URL. getService().getUrl() can return the
+    // editor-only /dev URL when running from a trigger, so it is only a fallback.
+    var base = getProp_('WEB_APP_URL') || ScriptApp.getService().getUrl();
+    var link = base + '?session=' + encodeURIComponent(session.session_id);
     MailApp.sendEmail({
       to: person.email,
       name: 'AATCE Apple Lab',

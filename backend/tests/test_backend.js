@@ -276,6 +276,15 @@ test('scan: long session exits and emails the activity form link', () => {
   assert.deepStrictEqual([row[3], row[4], row[7]], ['2026-10-05T11:30:00+05:30', 90, 'yes']);
 });
 
+test('activity email uses WEB_APP_URL when set', () => {
+  const env = setup();
+  env.props.WEB_APP_URL = 'https://script.google.com/macros/s/PUBLIC/exec';
+  const { session_id } = env.kiosk('scan', { enrollment_no: '2021001' });
+  env.advance(60);
+  env.kiosk('scan', { enrollment_no: '2021001' });
+  assert.ok(env.sentMail[0].htmlBody.includes('https://script.google.com/macros/s/PUBLIC/exec?session=' + session_id));
+});
+
 test('scan: a failed email does not fail the exit', () => {
   const env = setup();
   env.gs.MailApp.sendEmail = () => { throw new Error('Service invoked too many times'); };
