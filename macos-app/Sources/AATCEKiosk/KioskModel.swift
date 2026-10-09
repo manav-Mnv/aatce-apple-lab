@@ -249,7 +249,7 @@ final class KioskModel: ObservableObject {
             try await queue.enqueue(scan)
             status.queued = await queue.pending.count
             show(ScanResult(kind: .queued, title: "Scan saved",
-                            detail: "The lab is offline. It will sync automatically."))
+                            detail: "It syncs automatically — no need to scan again."))
         } catch {
             show(ScanResult(kind: .failure, title: "Couldn't save your scan", detail: error.localizedDescription))
         }

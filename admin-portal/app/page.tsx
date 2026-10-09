@@ -14,7 +14,9 @@ export default function Overview() {
   const todays = sessions.filter((s) => s.date === today);
   const week = inLastDays(sessions, 7, now);
   const formsDone = week.filter((s) => s.activityStatus === 'completed').length;
-  const formsAsked = week.filter((s) => s.activityStatus === 'completed' || s.activityStatus === 'pending').length;
+  // Forms are only asked for after a session ends; people still in the lab don't count yet.
+  const formsAsked = week.filter((s) => s.activityStatus === 'completed' ||
+    (s.activityStatus === 'pending' && (s.exit !== null || s.noExit))).length;
   const perDay = sessionsPerDay(sessions, 14, now);
   const recent = sessions.filter((s) => s.activity).slice(0, 6);
   const occupancy = data?.occupancy ?? [];
