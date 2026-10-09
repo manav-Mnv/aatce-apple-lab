@@ -13,10 +13,9 @@ Loads face images from a folder structure organized by enrollment number:
 Returns a dict mapping enrollment_no -> list of image paths.
 """
 
-import os
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 

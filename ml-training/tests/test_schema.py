@@ -23,11 +23,11 @@ VALID_EMBEDDINGS = {
     "entries": [
         {
             "enrollment_no": "2021001",
-            "embedding_vector": [0.1, -0.2, 0.3, 0.4, -0.5]
+            "embedding_vector": [0.01] * 512
         },
         {
             "enrollment_no": "2021002",
-            "embedding_vector": [0.6, 0.7, -0.8, 0.9, -0.1]
+            "embedding_vector": [-0.01] * 512
         }
     ]
 }
@@ -74,6 +74,19 @@ class TestValidateSchema:
         errors = validate_schema(bad)
         assert any("integer" in e for e in errors)
 
+    def test_vector_must_have_512_values(self):
+        bad = {**VALID_EMBEDDINGS, "entries": [{"enrollment_no": "2021001", "embedding_vector": [0.1] * 5}]}
+        assert any("512" in e for e in validate_schema(bad))
+
+    def test_duplicate_enrollment_no(self):
+        entry = VALID_EMBEDDINGS["entries"][0]
+        bad = {**VALID_EMBEDDINGS, "entries": [entry, entry]}
+        assert any("duplicates" in e for e in validate_schema(bad))
+
+    def test_unsafe_enrollment_no(self):
+        bad = {**VALID_EMBEDDINGS, "entries": [{"enrollment_no": "../x", "embedding_vector": [0.0] * 512}]}
+        assert any("enrollment_no" in e for e in validate_schema(bad))
+
     def test_entries_must_be_list(self):
         bad = {**VALID_EMBEDDINGS, "entries": "not a list"}
         errors = validate_schema(bad)
@@ -106,7 +119,7 @@ class TestValidateSchema:
     def test_embedding_vector_must_contain_numbers(self):
         bad = {
             **VALID_EMBEDDINGS,
-            "entries": [{"enrollment_no": "2021001", "embedding_vector": ["a", "b"]}]
+            "entries": [{"enrollment_no": "2021001", "embedding_vector": ["a"] * 512}]
         }
         errors = validate_schema(bad)
         assert any("non-numeric" in e for e in errors)

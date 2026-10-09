@@ -1,135 +1,149 @@
 /**
- * Embeddings.gs — Embeddings version-check endpoint.
+ * Embeddings.gs — Face dataset and embeddings exchange (FR-4, Phase 4).
  *
- * ARCHITECTURE (per SRS §6, PRD §8):
- * The full embeddings.json lives in Google Drive as a versioned file,
- * NOT routed through Apps Script. This avoids Apps Script payload/execution
- * limits as the student count grows (NFR-7).
+ * Nothing biometric is ever shared by public link. Drive files stay private to
+ * the script owner and only move through authenticated actions:
  *
- * Flow:
- *   - ML pipeline (GitHub Actions) generates embeddings.json and uploads
- *     it to a Google Drive folder.
- *   - ML pipeline also updates the Embeddings Sheet tab with just the
- *     version number and Drive file ID (lightweight metadata).
- *   - Kiosk app calls this endpoint to check the current version.
- *     If version > local version, kiosk downloads embeddings.json
- *     directly from Drive using the file ID.
+ *   kiosk     embeddings_version   → current version metadata
+ *   kiosk     embeddings_download  → the current embeddings.json (≈5 KB per person)
+ *   pipeline  face_manifest        → every face photo in Face-Dataset/<enrollment_no>/
+ *   pipeline  face_images          → up to MAX_FACE_IMAGES_PER_CALL photos as base64
+ *   pipeline  publish_embeddings   → store a new embeddings.json and bump the version
  *
- * This endpoint only serves metadata — never the full embedding vectors.
- *
- * Embeddings Sheet tab layout:
- *   Row 1 (header): version | generated_at | model_version | drive_file_id | entry_count
- *   Row 2 (data):   3       | 2026-10-01.. | facenet-v1    | 1AbC...xyz    | 152
+ * The Embeddings tab holds one data row:
+ *   version | generated_at | model_version | drive_file_id | entry_count
  */
 
-// Column indices for Embeddings tab (1-based)
-var EMB_COL_VERSION = 1;
-var EMB_COL_GENERATED_AT = 2;
-var EMB_COL_MODEL_VERSION = 3;
-var EMB_COL_DRIVE_FILE_ID = 4;
-var EMB_COL_ENTRY_COUNT = 5;
-
-/**
- * Returns the current embeddings version metadata.
- * The kiosk uses this to decide whether to re-download from Drive.
- *
- * @returns {Object} Response with version metadata.
- */
-function handleGetEmbeddingsVersion() {
-  var config = getConfig();
-
-  try {
-    var sheet = getSheet(config.ATTENDANCE_SHEET_ID, config.EMBEDDINGS_TAB);
-    var data = getAllData(sheet);
-
-    // No data or only header
-    if (data.length < 2) {
-      return {
-        success: true,
-        version: 0,
-        generated_at: '',
-        model_version: '',
-        drive_file_id: '',
-        entry_count: 0,
-        download_url: ''
-      };
-    }
-
-    var row = data[1]; // Data row (0 = header, 1 = data)
-    var driveFileId = row[EMB_COL_DRIVE_FILE_ID - 1] || '';
-
-    return {
-      success: true,
-      version: parseInt(row[EMB_COL_VERSION - 1]) || 0,
-      generated_at: row[EMB_COL_GENERATED_AT - 1] || '',
-      model_version: row[EMB_COL_MODEL_VERSION - 1] || '',
-      drive_file_id: driveFileId,
-      entry_count: parseInt(row[EMB_COL_ENTRY_COUNT - 1]) || 0,
-      download_url: driveFileId
-        ? 'https://drive.google.com/uc?export=download&id=' + driveFileId
-        : ''
-    };
-
-  } catch (err) {
-    return {
-      success: false,
-      error: 'Failed to read embeddings version: ' + err.message,
-      error_code: 'server_error'
-    };
-  }
+function handleEmbeddingsVersion_() {
+  var meta = embeddingsMeta_();
+  return {
+    success: true,
+    version: meta ? Number(meta.version) || 0 : 0,
+    generated_at: meta ? String(meta.generated_at || '') : '',
+    model_version: meta ? String(meta.model_version || '') : '',
+    entry_count: meta ? Number(meta.entry_count) || 0 : 0
+  };
 }
 
-/**
- * Updates the embeddings metadata after the ML pipeline uploads a new
- * embeddings.json to Drive. Called by the pipeline (not the kiosk).
- *
- * @param {Object} payload - Metadata about the new embeddings.
- * @param {number} payload.version - New version number.
- * @param {string} payload.generated_at - ISO 8601 timestamp.
- * @param {string} payload.model_version - Model identifier.
- * @param {string} payload.drive_file_id - Google Drive file ID.
- * @param {number} payload.entry_count - Number of entries in the file.
- * @returns {Object} Response object.
- */
-function handleUpdateEmbeddingsMeta(payload) {
-  if (!payload.version || !payload.drive_file_id) {
-    return {
-      success: false,
-      error: 'version and drive_file_id are required',
-      error_code: 'validation_error'
-    };
+function handleEmbeddingsDownload_() {
+  var meta = embeddingsMeta_();
+  if (!meta || !meta.drive_file_id) {
+    return errorResult_('No embeddings have been published yet', 'not_found');
+  }
+  var content = DriveApp.getFileById(String(meta.drive_file_id)).getBlob().getDataAsString();
+  return { success: true, embeddings: JSON.parse(content) };
+}
+
+function handlePublishEmbeddings_(body) {
+  var embeddings = body.embeddings;
+  var problem = embeddingsProblem_(embeddings);
+  if (problem) return errorResult_(problem, 'validation_error');
+
+  var table = aatceTable_(TABS.EMBEDDINGS);
+  var meta = table.records[0];
+  var current = meta ? Number(meta.version) || 0 : 0;
+  if (embeddings.version <= current) {
+    return errorResult_('version must be greater than the current version ' + current, 'version_conflict');
   }
 
-  var config = getConfig();
+  var folder = DriveApp.getFolderById(requireProp_('EMBEDDINGS_FOLDER_ID'));
+  var file = folder.createFile('embeddings-v' + embeddings.version + '.json',
+    JSON.stringify(embeddings), 'application/json');
 
-  try {
-    var sheet = getSheet(config.ATTENDANCE_SHEET_ID, config.EMBEDDINGS_TAB);
+  var fields = {
+    version: embeddings.version,
+    generated_at: embeddings.generated_at,
+    model_version: embeddings.model_version,
+    drive_file_id: file.getId(),
+    entry_count: embeddings.entries.length
+  };
+  if (meta) updateRecord_(table, meta, fields); else appendRecord_(table, fields);
 
-    // Clear and write: header in row 1, data in row 2
-    sheet.clear();
-    sheet.appendRow([
-      'version', 'generated_at', 'model_version', 'drive_file_id', 'entry_count'
-    ]);
-    sheet.appendRow([
-      parseInt(payload.version),
-      payload.generated_at || '',
-      payload.model_version || '',
-      payload.drive_file_id,
-      parseInt(payload.entry_count) || 0
-    ]);
-    SpreadsheetApp.flush();
+  return { success: true, version: embeddings.version, entry_count: fields.entry_count };
+}
 
-    return {
-      success: true,
-      message: 'Embeddings metadata updated',
-      version: parseInt(payload.version)
-    };
+function handleFaceManifest_() {
+  var people = [];
+  var folders = faceRoot_().getFolders();
+  while (folders.hasNext()) {
+    var folder = folders.next();
+    var enrollmentNo = cleanEnrollmentNo_(folder.getName());
+    if (!enrollmentNo) continue;
 
-  } catch (err) {
-    return {
-      success: false,
-      error: 'Failed to update embeddings metadata: ' + err.message,
-      error_code: 'server_error'
-    };
+    var files = [];
+    var it = folder.getFilesByType(MimeType.JPEG);
+    while (it.hasNext()) {
+      var f = it.next();
+      files.push({ id: f.getId(), name: f.getName(), size: f.getSize() });
+    }
+    if (files.length) people.push({ enrollment_no: enrollmentNo, files: files });
   }
+  return { success: true, people: people };
+}
+
+function handleFaceImages_(body) {
+  var ids = body.file_ids;
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > MAX_FACE_IMAGES_PER_CALL) {
+    return errorResult_('file_ids must be an array of 1–' + MAX_FACE_IMAGES_PER_CALL + ' Drive file IDs', 'validation_error');
+  }
+
+  var images = [];
+  for (var i = 0; i < ids.length; i++) {
+    var file = null;
+    try {
+      file = DriveApp.getFileById(String(ids[i]));
+    } catch (err) {
+      // reported as not_found below
+    }
+    if (!file || !isInFaceDataset_(file)) return errorResult_('File not found: ' + ids[i], 'not_found');
+    images.push({ file_id: String(ids[i]), data: Utilities.base64Encode(file.getBlob().getBytes()) });
+  }
+  return { success: true, images: images };
+}
+
+/** Only Face-Dataset/<enrollment_no>/<photo> files may be read through face_images. */
+function isInFaceDataset_(file) {
+  var rootId = requireProp_('FACE_DATASET_FOLDER_ID');
+  var parents = file.getParents();
+  while (parents.hasNext()) {
+    var grandparents = parents.next().getParents();
+    while (grandparents.hasNext()) {
+      if (grandparents.next().getId() === rootId) return true;
+    }
+  }
+  return false;
+}
+
+function faceRoot_() {
+  return DriveApp.getFolderById(requireProp_('FACE_DATASET_FOLDER_ID'));
+}
+
+function embeddingsMeta_() {
+  return aatceTable_(TABS.EMBEDDINGS).records[0] || null;
+}
+
+/** @returns {string} a description of the first schema problem, or '' if valid. */
+function embeddingsProblem_(e) {
+  if (!e || typeof e !== 'object') return 'embeddings must be an object';
+  if (!(Number.isInteger(e.version) && e.version > 0)) return 'version must be a positive integer';
+  if (typeof e.generated_at !== 'string' || !e.generated_at) return 'generated_at must be an ISO 8601 string';
+  if (typeof e.model_version !== 'string' || !e.model_version) return 'model_version must be a non-empty string';
+  if (!Array.isArray(e.entries)) return 'entries must be an array';
+
+  var seen = {};
+  for (var i = 0; i < e.entries.length; i++) {
+    var entry = e.entries[i];
+    var id = entry && cleanEnrollmentNo_(entry.enrollment_no);
+    if (!id) return 'entries[' + i + '].enrollment_no is invalid';
+    if (seen[id]) return 'entries[' + i + '] duplicates enrollment_no ' + id;
+    seen[id] = true;
+    var v = entry.embedding_vector;
+    if (!Array.isArray(v) || v.length !== EMBEDDING_DIM) {
+      return 'entries[' + i + '].embedding_vector must have ' + EMBEDDING_DIM + ' numbers';
+    }
+    for (var j = 0; j < v.length; j++) {
+      if (typeof v[j] !== 'number' || !isFinite(v[j])) return 'entries[' + i + '].embedding_vector has a non-numeric value';
+    }
+  }
+  return '';
 }

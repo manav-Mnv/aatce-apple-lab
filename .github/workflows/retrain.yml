@@ -1,72 +1,72 @@
-name: Retrain Embeddings
+name: Retrain embeddings
 
+# Weekly: download face photos through the backend → generate embeddings →
+# publish them through the backend. Nothing biometric is committed, cached or
+# uploaded as an artifact (the repo is public).
 on:
   schedule:
-    # Weekly on Sunday at 03:00 UTC (per SRS §7 — scheduled retraining)
-    - cron: '0 3 * * 0'
-  workflow_dispatch:  # Allow manual trigger
+    - cron: '30 21 * * 6'   # Sunday 03:00 IST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: retrain
+  cancel-in-progress: false
 
 jobs:
   retrain:
-    name: Generate Face Embeddings
     runs-on: ubuntu-latest
-
+    env:
+      APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
+      PIPELINE_SECRET: ${{ secrets.PIPELINE_SECRET }}
+    defaults:
+      run:
+        working-directory: ml-training
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Check configuration
+        id: config
+        run: |
+          if [ -z "$APPS_SCRIPT_URL" ] || [ -z "$PIPELINE_SECRET" ]; then
+            echo "::notice::APPS_SCRIPT_URL / PIPELINE_SECRET secrets are not set — skipping (see docs/SETUP.md)."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.config.outputs.ready == 'true'
         with:
           python-version: '3.11'
+          cache: pip
+          cache-dependency-path: ml-training/requirements.txt
 
-      - name: Cache pip packages
+      - name: Cache FaceNet weights (public pretrained model, not student data)
+        if: steps.config.outputs.ready == 'true'
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('ml-training/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          path: ~/.cache/torch
+          key: facenet-vggface2-v1
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
-        working-directory: ml-training
+        if: steps.config.outputs.ready == 'true'
+        run: pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
 
-      - name: Authenticate to Google Cloud
-        # Only needed if downloading face images from Drive
-        # Secrets: GOOGLE_SERVICE_ACCOUNT_KEY stored as GitHub encrypted secret (NFR-8)
-        if: env.GOOGLE_SERVICE_ACCOUNT_KEY != ''
-        env:
-          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
-        run: |
-          echo "$GOOGLE_SERVICE_ACCOUNT_KEY" > /tmp/sa-key.json
-          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json" >> $GITHUB_ENV
+      - name: Download face photos
+        if: steps.config.outputs.ready == 'true'
+        run: python -m src.sync_faces --dataset-dir "$RUNNER_TEMP/Face-Dataset"
 
-      - name: Download face dataset from Drive
-        # TODO: Implement Drive download script when face images are available
-        # For now, this step is a placeholder
-        run: echo "Face dataset download — configure when Drive folder is set up"
-        working-directory: ml-training
+      - name: Generate embeddings
+        if: steps.config.outputs.ready == 'true'
+        run: python -m src.pipeline --dataset-dir "$RUNNER_TEMP/Face-Dataset" --output "$RUNNER_TEMP/embeddings.json"
 
-      - name: Run embedding generation pipeline
-        run: |
-          python -m src.pipeline \
-            --dataset-dir ./Face-Dataset \
-            --output ./output/embeddings.json \
-            --previous ./output/embeddings.json \
-            --verbose
-        working-directory: ml-training
+      - name: Publish
+        if: steps.config.outputs.ready == 'true'
+        run: python -m src.publish --input "$RUNNER_TEMP/embeddings.json"
 
-      - name: Upload embeddings artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: embeddings-${{ github.run_number }}
-          path: ml-training/output/embeddings.json
-          retention-days: 30
-
-      - name: Commit updated embeddings
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add ml-training/output/embeddings.json
-          git diff --cached --quiet || git commit -m "ml-training: update embeddings (run #${{ github.run_number }})"
-          git push
+      - name: Remove local copies
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/Face-Dataset" "$RUNNER_TEMP/embeddings.json"
