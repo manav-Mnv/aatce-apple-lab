@@ -45,3 +45,21 @@ jobs:
         working-directory: macos-app
       - run: ./scripts/build-app.sh
         working-directory: macos-app
+
+  admin-portal:
+    name: Admin portal
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin-portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: admin-portal/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
