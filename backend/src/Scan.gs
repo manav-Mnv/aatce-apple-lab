@@ -1,203 +1,152 @@
 /**
- * Scan.gs — Scan endpoint (FR-7 through FR-12).
+ * Scan.gs — Entry/exit scans (FR-7 to FR-12, FR-14).
  *
- * Handles routine entry/exit scans:
- * - Entry: creates new session with UUID, logs entry_time
- * - Exit: updates existing session with exit_time, computes duration
- * - Cooldown: rejects if last scan was < 2 minutes ago (FR-11)
- * - Non-members: routes to Other_Workshop_Attendees (FR-12)
+ * Members (in Master_Students):
+ *   - no open session today → entry (new session_id)
+ *   - open session today    → exit (exit_time, duration_mins, activity email)
+ *   - any scan within SCAN_COOLDOWN_MS of the last one → `cooldown`
+ * Enrolled non-members are logged once per day to Other_Workshop_Attendees.
+ * Unknown enrollment numbers get `not_enrolled` so the kiosk can offer enrollment.
+ *
+ * `scanned_at` (optional, ISO 8601) is the moment the kiosk saw the face. The
+ * kiosk sends it when replaying scans queued while offline (NFR-2), so entry and
+ * exit times stay true. It must be within the last 24 hours and not in the future.
+ *
+ * `method: "manual"` marks scans where the student typed their enrollment number
+ * instead of being recognised (FR-8). They are noted in Attendance_Log so admins
+ * can spot proxy check-ins.
  */
 
-/**
- * Handles a scan request.
- * @param {Object} payload - Parsed JSON body.
- * @param {string} payload.enrollment_no - Student enrollment number (required).
- * @param {string} [payload.name] - Name (only needed for workshop attendees).
- * @param {string} [payload.email] - Email (only needed for workshop attendees).
- * @param {string} [payload.workshop_name] - Workshop name (for non-member attendees).
- * @returns {Object} Response object.
- */
-function handleScan(payload) {
-  if (!payload.enrollment_no) {
-    return {
-      success: false,
-      error: 'enrollment_no is required',
-      error_code: 'validation_error'
-    };
+var MAX_SCAN_AGE_MS = 24 * 60 * 60 * 1000;
+var MAX_CLOCK_SKEW_MS = 2 * 60 * 1000;
+
+function handleScan_(body) {
+  var enrollmentNo = cleanEnrollmentNo_(body.enrollment_no);
+  if (!enrollmentNo) return invalidEnrollmentNo_();
+
+  var now = scanTime_(body.scanned_at);
+  if (!now) {
+    return errorResult_('scanned_at must be an ISO 8601 time within the last 24 hours', 'validation_error');
+  }
+  var member = findRecord_(masterTable_(), MASTER_COLUMNS.enrollment_no, enrollmentNo);
+  if (!member) return logWorkshopAttendee_(enrollmentNo, body.workshop_name, now);
+
+  var log = aatceTable_(TABS.ATTENDANCE_LOG);
+  var today = dateKey_(now);
+  var lastScanMs = 0;
+  var open = null;
+
+  log.records.forEach(function (r) {
+    if (String(r.enrollment_no).trim() !== enrollmentNo) return;
+    [r.entry_time, r.exit_time].forEach(function (t) {
+      var ms = t ? new Date(t).getTime() : NaN;
+      if (ms > lastScanMs) lastScanMs = ms;
+    });
+    if (!r.exit_time && dateKey_(r.entry_time) === today) open = r;
+  });
+
+  var elapsed = now.getTime() - lastScanMs;
+  if (lastScanMs && elapsed >= 0 && elapsed < SCAN_COOLDOWN_MS) {
+    var remaining = Math.ceil((SCAN_COOLDOWN_MS - elapsed) / 1000);
+    var result = errorResult_('Cooldown active. Please wait ' + remaining + ' seconds.', 'cooldown');
+    result.cooldown_remaining_seconds = remaining;
+    return result;
   }
 
-  var config = getConfig();
-  var enrollmentNo = String(payload.enrollment_no).trim();
-  var now = new Date();
-
-  // Step 1: Check if student exists in Master_Students
-  var masterSheet = getSheet(config.MASTER_SHEET_ID, config.MASTER_STUDENTS_TAB);
-  var masterData = getAllData(masterSheet);
-  var colEnrollment = config.MS_COL_ENROLLMENT - 1;
-
-  var studentRow = -1;
-  for (var i = 1; i < masterData.length; i++) {
-    if (String(masterData[i][colEnrollment]).trim() === enrollmentNo) {
-      studentRow = i;
-      break;
-    }
-  }
-
-  // FR-12: Not in Master_Students → log to Other_Workshop_Attendees
-  if (studentRow === -1) {
-    return handleWorkshopAttendee(payload, config, now);
-  }
-
-  // Step 2: Check Attendance_Log for existing session today
-  var logSheet = getSheet(config.ATTENDANCE_SHEET_ID, config.ATTENDANCE_LOG_TAB);
-  var logData = getAllData(logSheet);
-
-  var alColSessionId = config.AL_COL_SESSION_ID - 1;
-  var alColEnrollment = config.AL_COL_ENROLLMENT - 1;
-  var alColEntryTime = config.AL_COL_ENTRY_TIME - 1;
-  var alColExitTime = config.AL_COL_EXIT_TIME - 1;
-  var alColDuration = config.AL_COL_DURATION - 1;
-
-  // Find open session today (has entry_time, no exit_time, from today)
-  var openSessionRow = -1;
-  var lastScanTime = null;
-
-  for (var j = 1; j < logData.length; j++) {
-    if (String(logData[j][alColEnrollment]).trim() === enrollmentNo) {
-      var entryTime = logData[j][alColEntryTime];
-      var exitTime = logData[j][alColExitTime];
-
-      // Track the most recent scan time for cooldown check
-      if (entryTime) {
-        var entryDate = new Date(entryTime);
-        if (!lastScanTime || entryDate > lastScanTime) {
-          lastScanTime = entryDate;
-        }
-      }
-      if (exitTime) {
-        var exitDate = new Date(exitTime);
-        if (!lastScanTime || exitDate > lastScanTime) {
-          lastScanTime = exitDate;
-        }
-      }
-
-      // Check for open session today
-      if (isToday(entryTime) && !exitTime) {
-        openSessionRow = j;
-      }
-    }
-  }
-
-  // FR-11: Enforce cooldown (2-minute minimum between scans)
-  if (lastScanTime) {
-    var elapsed = now.getTime() - lastScanTime.getTime();
-    if (elapsed < config.SCAN_COOLDOWN_MS) {
-      var remainingSec = Math.ceil((config.SCAN_COOLDOWN_MS - elapsed) / 1000);
-      return {
-        success: false,
-        error: 'Cooldown active. Please wait ' + remainingSec + ' seconds.',
-        error_code: 'cooldown',
-        cooldown_remaining_seconds: remainingSec
-      };
-    }
-  }
-
-  // Step 3: Entry or Exit
-  if (openSessionRow === -1) {
-    // FR-9: No open session today → ENTRY
-    return handleEntry(logSheet, config, enrollmentNo, now);
-  } else {
-    // FR-10: Open session exists → EXIT
-    return handleExit(logSheet, logData, config, openSessionRow, now);
-  }
+  var person = memberIdentity_(member);
+  var manual = body.method === 'manual';
+  return open
+    ? recordExit_(log, open, person, now, manual)
+    : recordEntry_(log, enrollmentNo, person, now, manual);
 }
 
-/**
- * Creates a new entry session.
- */
-function handleEntry(logSheet, config, enrollmentNo, now) {
-  var sessionId = generateUUID();
-  var entryTime = toISO(now);
+/** @returns {Date|null} the scan time, or null if `scannedAt` is given but unacceptable. */
+function scanTime_(scannedAt) {
+  var serverNow = new Date();
+  if (scannedAt === undefined || scannedAt === null || scannedAt === '') return serverNow;
+  var t = new Date(String(scannedAt));
+  var age = serverNow.getTime() - t.getTime();
+  if (isNaN(age) || age > MAX_SCAN_AGE_MS || age < -MAX_CLOCK_SKEW_MS) return null;
+  return age < 0 ? serverNow : t;
+}
 
-  // Schema: session_id, enrollment_no, entry_time, exit_time, duration_mins,
-  //         activity_form_status, activity_description, email_sent, notes
-  var newRow = [
-    sessionId,
-    enrollmentNo,
-    entryTime,
-    '',   // exit_time (empty — session is open)
-    '',   // duration_mins
-    'pending',  // activity_form_status
-    '',   // activity_description
-    'no', // email_sent
-    ''    // notes
-  ];
-
-  appendRowSafe(logSheet, newRow);
+function recordEntry_(log, enrollmentNo, person, now, manual) {
+  var session = {
+    session_id: Utilities.getUuid(),
+    enrollment_no: enrollmentNo,
+    entry_time: toISO_(now),
+    activity_form_status: 'pending',
+    email_sent: 'no',
+    notes: manual ? 'manual entry' : ''
+  };
+  appendRecord_(log, session);
 
   return {
     success: true,
     action: 'entry',
-    session_id: sessionId,
+    session_id: session.session_id,
     enrollment_no: enrollmentNo,
-    entry_time: entryTime
+    name: person.name,
+    entry_time: session.entry_time
   };
 }
 
-/**
- * Closes an open session (exit).
- */
-function handleExit(logSheet, logData, config, openSessionRow, now) {
-  var alColSessionId = config.AL_COL_SESSION_ID - 1;
-  var alColEntryTime = config.AL_COL_ENTRY_TIME - 1;
+function recordExit_(log, session, person, now, manual) {
+  var durationMins = Math.round((now.getTime() - new Date(session.entry_time).getTime()) / 60000);
+  var changes = { exit_time: toISO_(now), duration_mins: durationMins };
+  if (manual) {
+    changes.notes = session.notes ? session.notes + '; manual exit' : 'manual exit';
+  }
 
-  var sessionId = logData[openSessionRow][alColSessionId];
-  var entryTime = new Date(logData[openSessionRow][alColEntryTime]);
-  var exitTime = now;
-  var durationMs = exitTime.getTime() - entryTime.getTime();
-  var durationMins = Math.round(durationMs / 60000);
-
-  // Update the row in the sheet (openSessionRow is 0-based in data; +1 for 1-based sheet row)
-  var sheetRow = openSessionRow + 1;
-  var updates = {};
-  updates[config.AL_COL_EXIT_TIME] = toISO(exitTime);
-  updates[config.AL_COL_DURATION] = durationMins;
-
-  updateRowSafe(logSheet, sheetRow, updates);
+  if (durationMins >= ACTIVITY_EMAIL_MIN_MINUTES) {
+    changes.email_sent = sendActivityEmail_(session, person, durationMins) ? 'yes' : 'failed';
+  } else {
+    changes.activity_form_status = 'skipped';
+  }
+  updateRecord_(log, session, changes);
 
   return {
     success: true,
     action: 'exit',
-    session_id: sessionId,
-    enrollment_no: String(logData[openSessionRow][config.AL_COL_ENROLLMENT - 1]).trim(),
-    entry_time: toISO(entryTime),
-    exit_time: toISO(exitTime),
-    duration_mins: durationMins
+    session_id: session.session_id,
+    enrollment_no: String(session.enrollment_no).trim(),
+    name: person.name,
+    entry_time: session.entry_time,
+    exit_time: changes.exit_time,
+    duration_mins: durationMins,
+    activity_email_sent: changes.email_sent === 'yes'
   };
 }
 
-/**
- * Logs a non-member to Other_Workshop_Attendees (FR-12).
- */
-function handleWorkshopAttendee(payload, config, now) {
-  var sheet = getSheet(config.ATTENDANCE_SHEET_ID, config.OTHER_WORKSHOP_TAB);
+/** FR-12: one row per attendee per day. */
+function logWorkshopAttendee_(enrollmentNo, workshopName, now) {
+  var enrollment = findRecord_(aatceTable_(TABS.FACE_ENROLLMENTS), 'enrollment_no', enrollmentNo);
+  if (!enrollment) {
+    return errorResult_('Enrollment number not found. Please enroll first.', 'not_enrolled');
+  }
 
-  // Schema: id, name, enrollment_no, email, workshop_name, date
-  var newRow = [
-    generateUUID(),
-    payload.name || 'Unknown',
-    String(payload.enrollment_no).trim(),
-    payload.email || '',
-    payload.workshop_name || 'General',
-    toISO(now)
-  ];
+  var attendees = aatceTable_(TABS.WORKSHOP_ATTENDEES);
+  var today = dateKey_(now);
+  var alreadyLogged = attendees.records.some(function (r) {
+    return String(r.enrollment_no).trim() === enrollmentNo && dateKey_(r.date) === today;
+  });
 
-  appendRowSafe(sheet, newRow);
+  if (!alreadyLogged) {
+    appendRecord_(attendees, {
+      id: Utilities.getUuid(),
+      name: enrollment.name,
+      enrollment_no: enrollmentNo,
+      email: enrollment.email,
+      workshop_name: String(workshopName || '').trim() || 'General',
+      date: toISO_(now)
+    });
+  }
 
   return {
     success: true,
     action: 'workshop_attendee',
-    enrollment_no: String(payload.enrollment_no).trim(),
-    message: 'Logged as workshop attendee (not in Master_Students roster)'
+    enrollment_no: enrollmentNo,
+    name: String(enrollment.name || ''),
+    already_logged: alreadyLogged
   };
 }

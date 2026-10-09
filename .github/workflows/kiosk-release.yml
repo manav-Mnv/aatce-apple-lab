@@ -1,0 +1,55 @@
+name: Kiosk release
+
+# Exports the FaceNet model to Core ML on macOS, checks it against PyTorch,
+# and builds "AATCE Kiosk.app" with the model inside. Download the
+# AATCE-Kiosk artifact from the run and copy it to the lab iMac.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master, 'feature/**' ]
+    paths:
+      - 'macos-app/**'
+      - 'ml-training/src/export_coreml.py'
+      - 'ml-training/requirements-export.txt'
+
+permissions:
+  contents: read
+
+jobs:
+  face-model:
+    name: Export Core ML model
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install export dependencies
+        run: pip install -r requirements-export.txt --extra-index-url https://download.pytorch.org/whl/cpu
+        working-directory: ml-training
+      - name: Export and compare with PyTorch
+        run: python -m src.export_coreml --output FaceNet.mlpackage --check
+        working-directory: ml-training
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FaceNet-mlpackage
+          path: ml-training/FaceNet.mlpackage
+          retention-days: 30
+
+  app:
+    name: Build app
+    needs: face-model
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: FaceNet-mlpackage
+          path: FaceNet.mlpackage
+      - run: ./scripts/build-app.sh ../FaceNet.mlpackage
+        working-directory: macos-app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AATCE-Kiosk
+          path: macos-app/build/AATCE-Kiosk.zip
+          retention-days: 30

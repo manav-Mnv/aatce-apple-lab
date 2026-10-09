@@ -1,106 +1,151 @@
 /**
- * Enroll.gs — Enrollment endpoint (FR-1 through FR-6).
+ * Enroll.gs — Self-serve enrollment (FR-1 to FR-6, NFR-3).
  *
- * Handles self-serve enrollment: lookup existing student or create new,
- * set face_dataset_path, record registration timestamp.
- * Re-enrollment appends (FR-5), never overwrites.
+ * Flow on the kiosk:
+ *   lookup        → show the student's name for confirmation (FR-2)
+ *   enroll        → record consent + identity in Face_Enrollments
+ *   upload_faces  → save 3–5 face crops to Face-Dataset/<enrollment_no>/ (FR-4)
+ *
+ * Master_Students (the SCC registration sheet) is never written to. Members
+ * are recognised by being in it; everyone else is a workshop attendee whose
+ * name/email live only in Face_Enrollments (FR-12).
  */
 
-/**
- * Handles an enrollment request.
- * @param {Object} payload - Parsed JSON body.
- * @param {string} payload.enrollment_no - Student enrollment number (required).
- * @param {string} [payload.name] - Student name (required if not in Master_Students).
- * @param {string} [payload.email] - Student email (required if not in Master_Students).
- * @returns {Object} Response object.
- */
-function handleEnroll(payload) {
-  // Validate required field
-  if (!payload.enrollment_no) {
-    return {
-      success: false,
-      error: 'enrollment_no is required',
-      error_code: 'validation_error'
-    };
+function handleLookup_(body) {
+  var enrollmentNo = cleanEnrollmentNo_(body.enrollment_no);
+  if (!enrollmentNo) return invalidEnrollmentNo_();
+
+  var member = findRecord_(masterTable_(), MASTER_COLUMNS.enrollment_no, enrollmentNo);
+  var enrollment = findRecord_(aatceTable_(TABS.FACE_ENROLLMENTS), 'enrollment_no', enrollmentNo);
+  var person = member ? memberIdentity_(member) : enrollment;
+
+  return {
+    success: true,
+    enrollment_no: enrollmentNo,
+    is_member: !!member,
+    is_enrolled: !!enrollment,
+    name: person ? String(person.name || '') : '',
+    email_hint: person ? maskEmail_(person.email) : '',
+    photo_count: enrollment ? Number(enrollment.photo_count) || 0 : 0
+  };
+}
+
+function handleEnroll_(body) {
+  var enrollmentNo = cleanEnrollmentNo_(body.enrollment_no);
+  if (!enrollmentNo) return invalidEnrollmentNo_();
+  if (body.consent !== true) {
+    return errorResult_('Biometric consent is required to enroll', 'consent_required');
   }
 
-  var config = getConfig();
-  var enrollmentNo = String(payload.enrollment_no).trim();
+  var member = findRecord_(masterTable_(), MASTER_COLUMNS.enrollment_no, enrollmentNo);
+  var person = member
+    ? memberIdentity_(member)
+    : { name: String(body.name || '').trim(), email: String(body.email || '').trim() };
 
-  // Get Master_Students sheet
-  var sheet = getSheet(config.MASTER_SHEET_ID, config.MASTER_STUDENTS_TAB);
-  var data = getAllData(sheet);
-
-  // Column indices are 1-based in config, convert to 0-based for array access
-  var colEnrollment = config.MS_COL_ENROLLMENT - 1;
-  var colName = config.MS_COL_NAME - 1;
-  var colEmail = config.MS_COL_EMAIL - 1;
-  var colFacePath = config.MS_COL_FACE_PATH - 1;
-  var colRegistered = config.MS_COL_REGISTERED - 1;
-
-  // Skip header row (index 0), search from index 1
-  var rowIndex = -1;
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][colEnrollment]).trim() === enrollmentNo) {
-      rowIndex = i;
-      break;
-    }
+  if (!member && (!person.name || !isEmail_(person.email))) {
+    return errorResult_('name and a valid email are required for non-members', 'validation_error');
   }
 
-  var now = new Date();
-  var isNew = (rowIndex === -1);
-  var studentName, studentEmail;
-  var facePath = '/Face-Dataset/' + enrollmentNo + '/';
+  var enrollments = aatceTable_(TABS.FACE_ENROLLMENTS);
+  var existing = findRecord_(enrollments, 'enrollment_no', enrollmentNo);
+  var now = toISO_(new Date());
+  var fields = {
+    name: person.name,
+    email: person.email,
+    is_member: member ? 'yes' : 'no',
+    consent_at: now,
+    updated_at: now
+  };
 
-  if (isNew) {
-    // New student — name and email are required (FR-2)
-    if (!payload.name || !payload.email) {
-      return {
-        success: false,
-        error: 'name and email are required for new enrollment',
-        error_code: 'validation_error'
-      };
-    }
-
-    studentName = String(payload.name).trim();
-    studentEmail = String(payload.email).trim();
-
-    // Append new row to Master_Students
-    // Schema: enrollment_no, name, email, batch_tags, face_dataset_path, registered_at
-    var newRow = [
-      enrollmentNo,
-      studentName,
-      studentEmail,
-      '',            // batch_tags — empty initially
-      facePath,
-      toISO(now)
-    ];
-    appendRowSafe(sheet, newRow);
-
+  if (existing) {
+    updateRecord_(enrollments, existing, fields);
   } else {
-    // Existing student — confirm name/email from sheet (FR-2)
-    studentName = data[rowIndex][colName] || '';
-    studentEmail = data[rowIndex][colEmail] || '';
-
-    // Update face_dataset_path and registered_at if not already set (FR-5: append, not overwrite)
-    var existingFacePath = data[rowIndex][colFacePath];
-    if (!existingFacePath) {
-      // rowIndex is 0-based in data array; sheet rows are 1-based, +1 for header
-      var sheetRow = rowIndex + 1;
-      var updates = {};
-      updates[config.MS_COL_FACE_PATH] = facePath;
-      updates[config.MS_COL_REGISTERED] = toISO(now);
-      updateRowSafe(sheet, sheetRow, updates);
-    }
+    fields.enrollment_no = enrollmentNo;
+    fields.photo_count = 0;
+    fields.enrolled_at = now;
+    appendRecord_(enrollments, fields);
   }
 
   return {
     success: true,
     enrollment_no: enrollmentNo,
-    name: studentName,
-    email: studentEmail,
-    is_new: isNew,
-    face_dataset_path: facePath,
-    registered_at: toISO(now)
+    name: person.name,
+    email_hint: maskEmail_(person.email),
+    is_member: !!member,
+    is_new: !existing,
+    photo_count: existing ? Number(existing.photo_count) || 0 : 0
   };
+}
+
+/** Saves face crops to Drive. Re-enrollment adds photos, never replaces them (FR-5). */
+function handleUploadFaces_(body) {
+  var enrollmentNo = cleanEnrollmentNo_(body.enrollment_no);
+  if (!enrollmentNo) return invalidEnrollmentNo_();
+
+  var images = body.images;
+  if (!Array.isArray(images) || images.length === 0 || images.length > MAX_UPLOAD_IMAGES) {
+    return errorResult_('images must be an array of 1–' + MAX_UPLOAD_IMAGES + ' base64 JPEG strings', 'validation_error');
+  }
+
+  var enrollments = aatceTable_(TABS.FACE_ENROLLMENTS);
+  var enrollment = findRecord_(enrollments, 'enrollment_no', enrollmentNo);
+  if (!enrollment) return errorResult_('Enroll with consent before uploading photos', 'not_enrolled');
+
+  var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss');
+  var blobs = [];
+  for (var i = 0; i < images.length; i++) {
+    var bytes = decodeJpeg_(images[i]);
+    if (!bytes) {
+      return errorResult_('images[' + i + '] must be a base64 JPEG under ' + MAX_IMAGE_BYTES + ' bytes', 'validation_error');
+    }
+    blobs.push(Utilities.newBlob(bytes, 'image/jpeg', stamp + '-' + (i + 1) + '.jpg'));
+  }
+
+  var folder = personFolder_(enrollmentNo);
+  blobs.forEach(function (blob) { folder.createFile(blob); });
+
+  var photoCount = (Number(enrollment.photo_count) || 0) + blobs.length;
+  updateRecord_(enrollments, enrollment, { photo_count: photoCount, updated_at: toISO_(new Date()) });
+
+  return { success: true, enrollment_no: enrollmentNo, saved: blobs.length, photo_count: photoCount };
+}
+
+function decodeJpeg_(value) {
+  var bytes;
+  try {
+    bytes = Utilities.base64Decode(String(value));
+  } catch (err) {
+    return null;
+  }
+  var isJpeg = bytes.length > 2 && (bytes[0] & 0xff) === 0xff && (bytes[1] & 0xff) === 0xd8;
+  return isJpeg && bytes.length <= MAX_IMAGE_BYTES ? bytes : null;
+}
+
+function personFolder_(enrollmentNo) {
+  var root = DriveApp.getFolderById(requireProp_('FACE_DATASET_FOLDER_ID'));
+  var existing = root.getFoldersByName(enrollmentNo);
+  return existing.hasNext() ? existing.next() : root.createFolder(enrollmentNo);
+}
+
+function memberIdentity_(member) {
+  return {
+    name: String(member[MASTER_COLUMNS.name] || '').trim(),
+    email: String(member[MASTER_COLUMNS.email] || '').trim()
+  };
+}
+
+/** "alice@uni.ac.in" → "al•••@uni.ac.in" — enough for a student to recognise, not to harvest. */
+function maskEmail_(email) {
+  var s = String(email || '');
+  var at = s.indexOf('@');
+  if (at < 1) return '';
+  return s.slice(0, Math.min(2, at)) + '•••' + s.slice(at);
+}
+
+function isEmail_(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function invalidEnrollmentNo_() {
+  return errorResult_('enrollment_no is required (letters, digits, "-" or "_", max 32)', 'validation_error');
 }

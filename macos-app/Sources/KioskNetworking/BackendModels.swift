@@ -1,40 +1,74 @@
 import Foundation
 
 public struct StatusResponse: Decodable, Equatable, Sendable {
-    public let success: Bool
     public let status: String
     public let timestamp: String
     public let version: String
 }
 
-public struct EnrollResponse: Decodable, Equatable, Sendable {
-    public let success: Bool
+public struct LookupResponse: Decodable, Equatable, Sendable {
     public let enrollmentNo: String
+    public let isMember: Bool
+    public let isEnrolled: Bool
     public let name: String
-    public let email: String
-    public let isNew: Bool
-    public let faceDatasetPath: String
-    public let registeredAt: String
+    public let emailHint: String
+    public let photoCount: Int
 
     enum CodingKeys: String, CodingKey {
-        case success
         case enrollmentNo = "enrollment_no"
+        case isMember = "is_member"
+        case isEnrolled = "is_enrolled"
         case name
-        case email
-        case isNew = "is_new"
-        case faceDatasetPath = "face_dataset_path"
-        case registeredAt = "registered_at"
+        case emailHint = "email_hint"
+        case photoCount = "photo_count"
     }
 
     public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        success = try container.decode(Bool.self, forKey: .success)
-        enrollmentNo = try container.lenientString(forKey: .enrollmentNo)
-        name = try container.lenientString(forKey: .name)
-        email = try container.lenientString(forKey: .email)
-        isNew = try container.decode(Bool.self, forKey: .isNew)
-        faceDatasetPath = try container.lenientString(forKey: .faceDatasetPath)
-        registeredAt = try container.lenientString(forKey: .registeredAt)
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enrollmentNo = try c.lenientString(forKey: .enrollmentNo)
+        isMember = try c.decode(Bool.self, forKey: .isMember)
+        isEnrolled = try c.decode(Bool.self, forKey: .isEnrolled)
+        name = try c.lenientString(forKey: .name)
+        emailHint = try c.lenientString(forKey: .emailHint)
+        photoCount = try c.lenientInt(forKey: .photoCount) ?? 0
+    }
+}
+
+public struct EnrollResponse: Decodable, Equatable, Sendable {
+    public let enrollmentNo: String
+    public let name: String
+    public let emailHint: String
+    public let isMember: Bool
+    public let isNew: Bool
+    public let photoCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case enrollmentNo = "enrollment_no"
+        case name
+        case emailHint = "email_hint"
+        case isMember = "is_member"
+        case isNew = "is_new"
+        case photoCount = "photo_count"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enrollmentNo = try c.lenientString(forKey: .enrollmentNo)
+        name = try c.lenientString(forKey: .name)
+        emailHint = try c.lenientString(forKey: .emailHint)
+        isMember = try c.decode(Bool.self, forKey: .isMember)
+        isNew = try c.decode(Bool.self, forKey: .isNew)
+        photoCount = try c.lenientInt(forKey: .photoCount) ?? 0
+    }
+}
+
+public struct UploadFacesResponse: Decodable, Equatable, Sendable {
+    public let saved: Int
+    public let photoCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case saved
+        case photoCount = "photo_count"
     }
 }
 
@@ -45,132 +79,90 @@ public enum ScanOutcome: String, Decodable, Equatable, Sendable {
 }
 
 public struct ScanResponse: Decodable, Equatable, Sendable {
-    public let success: Bool
     public let action: ScanOutcome
-    public let sessionId: String?
     public let enrollmentNo: String
+    public let name: String
+    public let sessionId: String?
     public let entryTime: String?
     public let exitTime: String?
     public let durationMins: Int?
-    public let message: String?
+    public let alreadyLogged: Bool
 
     enum CodingKeys: String, CodingKey {
-        case success
         case action
-        case sessionId = "session_id"
-        case enrollmentNo = "enrollment_no"
-        case entryTime = "entry_time"
-        case exitTime = "exit_time"
-        case durationMins = "duration_mins"
-        case message
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        success = try container.decode(Bool.self, forKey: .success)
-        action = try container.decode(ScanOutcome.self, forKey: .action)
-        sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId)
-        enrollmentNo = try container.lenientString(forKey: .enrollmentNo)
-        entryTime = try container.decodeIfPresent(String.self, forKey: .entryTime)
-        exitTime = try container.decodeIfPresent(String.self, forKey: .exitTime)
-        durationMins = try container.lenientInt(forKey: .durationMins)
-        message = try container.decodeIfPresent(String.self, forKey: .message)
-    }
-}
-
-public struct AttendanceEntry: Decodable, Equatable, Sendable {
-    public let sessionId: String
-    public let enrollmentNo: String
-    public let entryTime: String
-    public let exitTime: String
-    public let durationMins: Int?
-    public let activityFormStatus: String
-    public let activityDescription: String
-    public let emailSent: String
-    public let notes: String
-
-    enum CodingKeys: String, CodingKey {
-        case sessionId = "session_id"
-        case enrollmentNo = "enrollment_no"
-        case entryTime = "entry_time"
-        case exitTime = "exit_time"
-        case durationMins = "duration_mins"
-        case activityFormStatus = "activity_form_status"
-        case activityDescription = "activity_description"
-        case emailSent = "email_sent"
-        case notes
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        sessionId = try container.lenientString(forKey: .sessionId)
-        enrollmentNo = try container.lenientString(forKey: .enrollmentNo)
-        entryTime = try container.lenientString(forKey: .entryTime)
-        exitTime = try container.lenientString(forKey: .exitTime)
-        durationMins = try container.lenientInt(forKey: .durationMins)
-        activityFormStatus = try container.lenientString(forKey: .activityFormStatus)
-        activityDescription = try container.lenientString(forKey: .activityDescription)
-        emailSent = try container.lenientString(forKey: .emailSent)
-        notes = try container.lenientString(forKey: .notes)
-    }
-}
-
-public struct AttendanceLogResponse: Decodable, Equatable, Sendable {
-    public let success: Bool
-    public let count: Int
-    public let entries: [AttendanceEntry]
-}
-
-public struct Student: Decodable, Equatable, Sendable {
-    public let enrollmentNo: String
-    public let name: String
-    public let email: String
-    public let batchTags: String
-    public let faceDatasetPath: String
-    public let registeredAt: String
-
-    enum CodingKeys: String, CodingKey {
         case enrollmentNo = "enrollment_no"
         case name
-        case email
-        case batchTags = "batch_tags"
-        case faceDatasetPath = "face_dataset_path"
-        case registeredAt = "registered_at"
+        case sessionId = "session_id"
+        case entryTime = "entry_time"
+        case exitTime = "exit_time"
+        case durationMins = "duration_mins"
+        case alreadyLogged = "already_logged"
     }
 
     public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        enrollmentNo = try container.lenientString(forKey: .enrollmentNo)
-        name = try container.lenientString(forKey: .name)
-        email = try container.lenientString(forKey: .email)
-        batchTags = try container.lenientString(forKey: .batchTags)
-        faceDatasetPath = try container.lenientString(forKey: .faceDatasetPath)
-        registeredAt = try container.lenientString(forKey: .registeredAt)
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        action = try c.decode(ScanOutcome.self, forKey: .action)
+        enrollmentNo = try c.lenientString(forKey: .enrollmentNo)
+        name = try c.lenientString(forKey: .name)
+        sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId)
+        entryTime = try c.decodeIfPresent(String.self, forKey: .entryTime)
+        exitTime = try c.decodeIfPresent(String.self, forKey: .exitTime)
+        durationMins = try c.lenientInt(forKey: .durationMins)
+        alreadyLogged = try c.decodeIfPresent(Bool.self, forKey: .alreadyLogged) ?? false
     }
-}
-
-public struct StudentsResponse: Decodable, Equatable, Sendable {
-    public let success: Bool
-    public let count: Int
-    public let students: [Student]
 }
 
 public struct EmbeddingsVersionInfo: Decodable, Equatable, Sendable {
-    public let success: Bool
     public let version: Int
     public let generatedAt: String
     public let modelVersion: String
-    public let driveFileId: String
     public let entryCount: Int
-    public let downloadUrl: String
 
     enum CodingKeys: String, CodingKey {
-        case success
         case version
         case generatedAt = "generated_at"
         case modelVersion = "model_version"
-        case driveFileId = "drive_file_id"
         case entryCount = "entry_count"
-        case downloadUrl = "download_url"
     }
+}
+
+public struct EmbeddingEntry: Codable, Equatable, Sendable {
+    public let enrollmentNo: String
+    public let embeddingVector: [Float]
+
+    public init(enrollmentNo: String, embeddingVector: [Float]) {
+        self.enrollmentNo = enrollmentNo
+        self.embeddingVector = embeddingVector
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case enrollmentNo = "enrollment_no"
+        case embeddingVector = "embedding_vector"
+    }
+}
+
+/// The published embeddings.json (SRS §6).
+public struct EmbeddingsFile: Codable, Equatable, Sendable {
+    public let version: Int
+    public let generatedAt: String
+    public let modelVersion: String
+    public let entries: [EmbeddingEntry]
+
+    public init(version: Int, generatedAt: String, modelVersion: String, entries: [EmbeddingEntry]) {
+        self.version = version
+        self.generatedAt = generatedAt
+        self.modelVersion = modelVersion
+        self.entries = entries
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case generatedAt = "generated_at"
+        case modelVersion = "model_version"
+        case entries
+    }
+}
+
+struct EmbeddingsDownloadResponse: Decodable {
+    let embeddings: EmbeddingsFile
 }

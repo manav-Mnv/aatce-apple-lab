@@ -1,290 +1,165 @@
 """
-embeddings.py — Face embedding generator.
+embeddings.py — Face embedding generation.
 
-Uses a pre-trained face recognition model (FaceNet via facenet-pytorch)
-to generate embedding vectors from face images.
+Input images are the 160×160 face crops the kiosk uploads at enrollment
+(Vision face box + margin, squared, resized). The kiosk computes live
+embeddings from crops made the same way, with the same model exported to
+Core ML (export_coreml.py), so both sides see identical preprocessing:
 
-Output schema matches SRS §6 / backend API_CONTRACT.md exactly:
-{
-    "version": <int>,
-    "generated_at": "<ISO 8601>",
-    "model_version": "<string>",
-    "entries": [
-        {
-            "enrollment_no": "<string>",
-            "embedding_vector": [<float>, ...]
-        }
-    ]
-}
+    pixels (RGB, 0–255) → (x − 127.5) / 128 → InceptionResnetV1 (VGGFace2) → 512-d, L2-normalised
+
+Output schema (SRS §6, backend/API_CONTRACT.md):
+    { "version": int, "generated_at": ISO 8601, "model_version": str,
+      "entries": [ { "enrollment_no": str, "embedding_vector": [512 floats] } ] }
 """
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-# Default embedding dimension for FaceNet (InceptionResnetV1)
 EMBEDDING_DIM = 512
-
-# Model identifier for versioning
+FACE_SIZE = 160
 MODEL_ID = "facenet-inceptionresnetv1-vggface2"
+ENROLLMENT_NO_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+
+# Takes a float32 batch shaped (N, 3, 160, 160), returns (N, 512).
+Embedder = Callable[[np.ndarray], np.ndarray]
 
 
-def generate_embeddings(
-    dataset: Dict[str, List[str]],
-    model=None,
-    mtcnn=None,
-    device: str = "cpu"
-) -> Dict[str, Any]:
-    """
-    Generate face embeddings for all people in the dataset.
-
-    Args:
-        dataset: Dict mapping enrollment_no -> list of image paths
-                 (output of dataset.load_dataset()).
-        model: Pre-loaded InceptionResnetV1 model. If None, loads default.
-        mtcnn: Pre-loaded MTCNN face detector. If None, loads default.
-        device: PyTorch device string ('cpu' or 'cuda').
-
-    Returns:
-        Embeddings dict matching the canonical schema.
-    """
-    if model is None or mtcnn is None:
-        model, mtcnn = _load_models(device)
-
-    entries = []
-    failed = []
-
-    for enrollment_no, image_paths in sorted(dataset.items()):
-        logger.info(f"Processing {enrollment_no} ({len(image_paths)} images)...")
-
-        try:
-            embedding = _compute_person_embedding(
-                image_paths, model, mtcnn, device
-            )
-
-            if embedding is not None:
-                entries.append({
-                    "enrollment_no": enrollment_no,
-                    "embedding_vector": embedding.tolist()
-                })
-                logger.info(
-                    f"  ✓ {enrollment_no}: embedding generated "
-                    f"(dim={len(embedding)})"
-                )
-            else:
-                failed.append(enrollment_no)
-                logger.warning(
-                    f"  ✗ {enrollment_no}: no faces detected in any image"
-                )
-
-        except Exception as e:
-            failed.append(enrollment_no)
-            logger.error(f"  ✗ {enrollment_no}: error — {e}")
-
-    if failed:
-        logger.warning(
-            f"Failed to generate embeddings for {len(failed)} people: {failed}"
-        )
-
-    result = {
-        "version": 0,  # Will be set by pipeline.py
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "model_version": MODEL_ID,
-        "entries": entries
-    }
-
-    logger.info(
-        f"Generated {len(entries)} embeddings, {len(failed)} failures"
-    )
-
-    return result
-
-
-def _load_models(device: str = "cpu"):
-    """
-    Load the FaceNet model and MTCNN face detector.
-
-    Returns:
-        Tuple of (model, mtcnn).
-    """
+def load_embedder(device: str = "cpu") -> Embedder:
+    """Loads FaceNet. Imported lazily so tests and tooling don't need torch."""
     import torch
-    from facenet_pytorch import MTCNN, InceptionResnetV1
+    from facenet_pytorch import InceptionResnetV1
 
-    logger.info("Loading MTCNN face detector...")
-    mtcnn = MTCNN(
-        image_size=160,
-        margin=20,
-        min_face_size=40,
-        thresholds=[0.6, 0.7, 0.7],
-        factor=0.709,
-        post_process=True,
-        device=device,
-        keep_all=False  # Return only the most prominent face
-    )
+    model = InceptionResnetV1(pretrained="vggface2").eval().to(device)
 
-    logger.info("Loading InceptionResnetV1 (pretrained='vggface2')...")
-    model = InceptionResnetV1(pretrained='vggface2').eval().to(device)
+    def embed(batch: np.ndarray) -> np.ndarray:
+        with torch.no_grad():
+            return model(torch.from_numpy(batch).to(device)).cpu().numpy()
 
-    logger.info("Models loaded successfully.")
-    return model, mtcnn
+    return embed
 
 
-def _compute_person_embedding(
-    image_paths: List[str],
-    model,
-    mtcnn,
-    device: str = "cpu"
-) -> Optional[np.ndarray]:
-    """
-    Compute a single representative embedding for a person by averaging
-    embeddings from multiple face images.
+def preprocess(image_path: str) -> np.ndarray:
+    """Face crop → (3, 160, 160) float32, standardised as FaceNet expects."""
+    with Image.open(image_path) as img:
+        img = img.convert("RGB")
+        if img.size != (FACE_SIZE, FACE_SIZE):
+            img = img.resize((FACE_SIZE, FACE_SIZE), Image.BILINEAR)
+        pixels = np.asarray(img, dtype=np.float32)
+    return ((pixels - 127.5) / 128.0).transpose(2, 0, 1)
 
-    Args:
-        image_paths: List of paths to face images.
-        model: InceptionResnetV1 model.
-        mtcnn: MTCNN face detector.
-        device: PyTorch device.
 
-    Returns:
-        Numpy array of shape (EMBEDDING_DIM,) or None if no faces detected.
-    """
-    import torch
-    from PIL import Image
-
-    embeddings = []
-
-    for img_path in image_paths:
+def person_embedding(image_paths: List[str], embed: Embedder) -> Optional[np.ndarray]:
+    """Mean of the per-photo embeddings, re-normalised to unit length."""
+    batch = []
+    for path in image_paths:
         try:
-            img = Image.open(img_path).convert('RGB')
-
-            # Detect and align face
-            face_tensor = mtcnn(img)
-
-            if face_tensor is None:
-                logger.debug(f"  No face detected in {img_path}")
-                continue
-
-            # face_tensor shape: (3, 160, 160)
-            # Model expects batch: (N, 3, 160, 160)
-            face_batch = face_tensor.unsqueeze(0).to(device)
-
-            with torch.no_grad():
-                emb = model(face_batch)
-
-            embeddings.append(emb.cpu().numpy().flatten())
-
-        except Exception as e:
-            logger.debug(f"  Error processing {img_path}: {e}")
-
-    if not embeddings:
+            batch.append(preprocess(path))
+        except OSError as e:
+            logger.warning(f"Skipping unreadable image {path}: {e}")
+    if not batch:
         return None
 
-    # Average all embeddings for this person (more stable than single image)
-    avg_embedding = np.mean(embeddings, axis=0)
-
-    # L2 normalize for cosine similarity compatibility
-    norm = np.linalg.norm(avg_embedding)
-    if norm > 0:
-        avg_embedding = avg_embedding / norm
-
-    return avg_embedding
+    mean = embed(np.stack(batch)).mean(axis=0)
+    norm = np.linalg.norm(mean)
+    return mean / norm if norm > 0 else None
 
 
-def save_embeddings(
-    embeddings: Dict[str, Any],
-    output_path: str,
-    pretty: bool = True
-) -> str:
+def generate_embeddings(dataset: Dict[str, List[str]], embed: Embedder) -> Dict[str, Any]:
     """
-    Save embeddings dict to a JSON file.
-
-    Args:
-        embeddings: The embeddings dict (canonical schema).
-        output_path: Path to write the JSON file.
-        pretty: Whether to pretty-print the JSON.
-
-    Returns:
-        The absolute path of the written file.
+    Builds the embeddings document for every person in the dataset.
+    `version` is 0 here; publish.py assigns the real version at upload time.
     """
+    entries = []
+    failed = []
+    for enrollment_no, image_paths in sorted(dataset.items()):
+        vector = person_embedding(image_paths, embed)
+        if vector is None:
+            failed.append(enrollment_no)
+            continue
+        entries.append({
+            "enrollment_no": enrollment_no,
+            "embedding_vector": [round(float(v), 6) for v in vector],
+        })
+
+    if failed:
+        logger.warning(f"No usable images for {len(failed)} people: {failed}")
+    logger.info(f"Generated {len(entries)} embeddings")
+
+    return {
+        "version": 0,
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "model_version": MODEL_ID,
+        "entries": entries,
+    }
+
+
+def save_embeddings(embeddings: Dict[str, Any], output_path: str) -> str:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(output, 'w', encoding='utf-8') as f:
-        json.dump(embeddings, f, indent=2 if pretty else None, ensure_ascii=False)
-
+    output.write_text(json.dumps(embeddings), encoding="utf-8")
     logger.info(f"Embeddings saved to {output.resolve()}")
     return str(output.resolve())
 
 
 def load_embeddings(input_path: str) -> Optional[Dict[str, Any]]:
-    """
-    Load embeddings from a JSON file.
-
-    Args:
-        input_path: Path to the embeddings JSON file.
-
-    Returns:
-        Embeddings dict, or None if file doesn't exist.
-    """
     path = Path(input_path)
     if not path.exists():
         return None
-
-    with open(path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
-def validate_schema(embeddings: Dict[str, Any]) -> List[str]:
-    """
-    Validate that an embeddings dict conforms to the canonical schema.
-
-    Returns:
-        List of validation error strings (empty if valid).
-    """
-    errors = []
-
+def validate_schema(embeddings: Any) -> List[str]:
+    """Returns a list of schema problems (empty if valid). Mirrors the backend's checks."""
     if not isinstance(embeddings, dict):
         return ["Root must be a dict"]
 
-    required_keys = ["version", "generated_at", "model_version", "entries"]
-    for key in required_keys:
+    errors = []
+    for key in ("version", "generated_at", "model_version", "entries"):
         if key not in embeddings:
             errors.append(f"Missing required key: {key}")
 
-    if "version" in embeddings:
-        if not isinstance(embeddings["version"], int):
-            errors.append(f"'version' must be an integer, got {type(embeddings['version']).__name__}")
+    version = embeddings.get("version")
+    if "version" in embeddings and (not isinstance(version, int) or isinstance(version, bool) or version < 0):
+        errors.append("'version' must be a non-negative integer")
+    if "generated_at" in embeddings and not isinstance(embeddings["generated_at"], str):
+        errors.append("'generated_at' must be a string (ISO 8601)")
+    if "model_version" in embeddings and not isinstance(embeddings["model_version"], str):
+        errors.append("'model_version' must be a string")
 
-    if "generated_at" in embeddings:
-        if not isinstance(embeddings["generated_at"], str):
-            errors.append("'generated_at' must be a string (ISO 8601)")
+    entries = embeddings.get("entries")
+    if "entries" in embeddings and not isinstance(entries, list):
+        errors.append("'entries' must be a list")
+        return errors
 
-    if "model_version" in embeddings:
-        if not isinstance(embeddings["model_version"], str):
-            errors.append("'model_version' must be a string")
-
-    if "entries" in embeddings:
-        if not isinstance(embeddings["entries"], list):
-            errors.append("'entries' must be a list")
+    seen = set()
+    for i, entry in enumerate(entries or []):
+        if not isinstance(entry, dict):
+            errors.append(f"entries[{i}] must be a dict")
+            continue
+        enrollment_no = entry.get("enrollment_no")
+        if not isinstance(enrollment_no, str) or not ENROLLMENT_NO_PATTERN.match(enrollment_no):
+            errors.append(f"entries[{i}] has an invalid 'enrollment_no'")
+        elif enrollment_no in seen:
+            errors.append(f"entries[{i}] duplicates enrollment_no {enrollment_no}")
         else:
-            for i, entry in enumerate(embeddings["entries"]):
-                if not isinstance(entry, dict):
-                    errors.append(f"entries[{i}] must be a dict")
-                    continue
-                if "enrollment_no" not in entry:
-                    errors.append(f"entries[{i}] missing 'enrollment_no'")
-                if "embedding_vector" not in entry:
-                    errors.append(f"entries[{i}] missing 'embedding_vector'")
-                elif not isinstance(entry["embedding_vector"], list):
-                    errors.append(f"entries[{i}]['embedding_vector'] must be a list of floats")
-                elif entry["embedding_vector"]:
-                    if not all(isinstance(v, (int, float)) for v in entry["embedding_vector"]):
-                        errors.append(f"entries[{i}]['embedding_vector'] contains non-numeric values")
+            seen.add(enrollment_no)
+
+        vector = entry.get("embedding_vector")
+        if not isinstance(vector, list):
+            errors.append(f"entries[{i}]['embedding_vector'] must be a list of floats")
+        elif len(vector) != EMBEDDING_DIM:
+            errors.append(f"entries[{i}]['embedding_vector'] must have {EMBEDDING_DIM} values")
+        elif not all(isinstance(v, (int, float)) and not isinstance(v, bool) and np.isfinite(v) for v in vector):
+            errors.append(f"entries[{i}]['embedding_vector'] contains non-numeric values")
 
     return errors

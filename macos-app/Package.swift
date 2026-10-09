@@ -7,10 +7,15 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
+        .executable(name: "AATCEKiosk", targets: ["AATCEKiosk"]),
+        .library(name: "KioskCore", targets: ["KioskCore"]),
         .library(name: "KioskNetworking", targets: ["KioskNetworking"])
     ],
     targets: [
         .target(name: "KioskNetworking"),
-        .testTarget(name: "KioskNetworkingTests", dependencies: ["KioskNetworking"])
+        .target(name: "KioskCore", dependencies: ["KioskNetworking"]),
+        .executableTarget(name: "AATCEKiosk", dependencies: ["KioskCore", "KioskNetworking"]),
+        .testTarget(name: "KioskNetworkingTests", dependencies: ["KioskNetworking"]),
+        .testTarget(name: "KioskCoreTests", dependencies: ["KioskCore", "KioskNetworking"])
     ]
 )

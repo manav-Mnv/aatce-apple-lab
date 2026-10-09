@@ -1,0 +1,4 @@
+# Unit tests (no torch needed — the model is injected as a function)
+numpy>=1.24
+Pillow>=10.0
+pytest>=7.0

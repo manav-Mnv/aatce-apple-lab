@@ -1,11 +1,16 @@
 import Foundation
 
-public enum BackendErrorCode: String, Equatable, Sendable {
+public enum BackendErrorCode: String, Sendable {
     case authMissing = "auth_missing"
     case authInvalid = "auth_invalid"
     case authMisconfigured = "auth_misconfigured"
+    case forbidden
     case validationError = "validation_error"
+    case consentRequired = "consent_required"
+    case notEnrolled = "not_enrolled"
+    case notFound = "not_found"
     case cooldown
+    case versionConflict = "version_conflict"
     case unknownAction = "unknown_action"
     case invalidJSON = "invalid_json"
     case serverError = "server_error"
@@ -17,44 +22,34 @@ public struct APIError: Error, Equatable, Sendable {
     public let message: String
     public let cooldownRemainingSeconds: Int?
 
-    public init(errorCode: String, message: String, cooldownRemainingSeconds: Int?) {
+    public init(errorCode: String, message: String, cooldownRemainingSeconds: Int? = nil) {
         self.errorCode = errorCode
         self.message = message
         self.cooldownRemainingSeconds = cooldownRemainingSeconds
     }
 
-    public var code: BackendErrorCode? {
-        BackendErrorCode(rawValue: errorCode)
-    }
-
-    public var isAuthenticationFailure: Bool {
-        code == .authMissing || code == .authInvalid || code == .authMisconfigured
-    }
-
-    public var isCooldown: Bool {
-        code == .cooldown
-    }
+    public var code: BackendErrorCode? { BackendErrorCode(rawValue: errorCode) }
 }
 
 public enum BackendError: Error, Equatable, Sendable {
+    /// No response (offline, DNS, timeout). Scans hitting this are queued.
     case transport(String)
     case httpStatus(Int)
     case decoding(String)
     case api(APIError)
-    case invalidEmbeddingsFile(String)
-}
 
-extension BackendError {
-    public var apiError: APIError? {
-        if case .api(let error) = self { return error }
+    public var code: BackendErrorCode? {
+        if case .api(let error) = self { return error.code }
         return nil
     }
 
-    public var isAuthenticationFailure: Bool {
-        apiError?.isAuthenticationFailure ?? false
-    }
-
-    public var isCooldown: Bool {
-        apiError?.isCooldown ?? false
+    /// True when retrying later could succeed, so a queued scan should be kept.
+    public var isRetryable: Bool {
+        switch self {
+        case .transport: return true
+        case .httpStatus(let status): return status >= 500 || status == 429
+        case .decoding: return true  // e.g. an HTML error page from Google during an outage
+        case .api(let error): return error.code == .serverError
+        }
     }
 }
