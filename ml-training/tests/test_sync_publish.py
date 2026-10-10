@@ -1,4 +1,4 @@
-"""sync_faces and publish against a fake backend (same contract as backend/API_CONTRACT.md)."""
+"""sync_faces and publish against a fake backend (same contract as supabase/API_CONTRACT.md)."""
 
 import base64
 import json
@@ -103,8 +103,12 @@ class TestPublish:
 
 
 class TestClientConfig:
-    def test_from_env_requires_both_values(self, monkeypatch):
-        monkeypatch.delenv("APPS_SCRIPT_URL", raising=False)
+    def test_from_env_requires_all_values(self, monkeypatch):
+        monkeypatch.setenv("SUPABASE_URL", "https://abcd.supabase.co")
+        monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY", raising=False)
         monkeypatch.setenv("PIPELINE_SECRET", "s")
         with pytest.raises(BackendError, match="not_configured"):
             BackendClient.from_env()
+
+    def test_endpoint(self):
+        assert BackendClient("https://abcd.supabase.co/", "k", "s").endpoint == "https://abcd.supabase.co/rest/v1/rpc/api"

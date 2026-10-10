@@ -16,7 +16,8 @@ enum Fixture {
 }
 
 final class BackendClientTests: XCTestCase {
-    private let baseURL = URL(string: "https://script.google.com/macros/s/DEPLOYMENT/exec")!
+    private let projectURL = URL(string: "https://abcd.supabase.co")!
+    private let endpoint = URL(string: "https://abcd.supabase.co/rest/v1/rpc/api")!
 
     override func setUp() {
         super.setUp()
@@ -27,7 +28,8 @@ final class BackendClientTests: XCTestCase {
         StubURLProtocol.setHandler { _ in (status, Data(body.utf8)) }
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubURLProtocol.self]
-        return BackendClient(configuration: BackendConfiguration(baseURL: baseURL, secret: "kiosk-secret"),
+        return BackendClient(configuration: BackendConfiguration(projectURL: projectURL, publishableKey: "sb_publishable_test",
+                                                                 secret: "kiosk-secret"),
                              session: URLSession(configuration: config))
     }
 
@@ -37,9 +39,10 @@ final class BackendClientTests: XCTestCase {
         _ = try await client(responding: Fixture.status).status()
         let request = try XCTUnwrap(StubURLProtocol.requests.last).request
         XCTAssertEqual(request.httpMethod, "POST")
-        XCTAssertEqual(request.url, baseURL)
+        XCTAssertEqual(request.url, endpoint)
         XCTAssertNil(request.url?.query, "the secret must never be in the URL")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "apikey"), "sb_publishable_test")
         XCTAssertEqual(lastBody["secret"] as? String, "kiosk-secret")
         XCTAssertEqual(lastBody["action"] as? String, "status")
     }

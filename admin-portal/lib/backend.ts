@@ -1,8 +1,10 @@
 import 'server-only';
 
 /**
- * Server-side calls to the Apps Script backend with the admin secret (FR-20).
- * The secret never reaches the browser: only Route Handlers import this file.
+ * Server-side calls to the Supabase backend with the admin secret (FR-20).
+ * POST <SUPABASE_URL>/rest/v1/rpc/api with { secret, action, ...params } and the
+ * publishable key in `apikey`. Only server code imports this file, so the admin
+ * secret never reaches the browser.
  */
 export class BackendError extends Error {
   constructor(public code: string, message: string) {
@@ -11,14 +13,16 @@ export class BackendError extends Error {
 }
 
 export async function callBackend<T>(action: string, params: Record<string, unknown> = {}): Promise<T> {
-  const url = process.env.APPS_SCRIPT_URL;
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_PUBLISHABLE_KEY;
   const secret = process.env.ADMIN_SECRET;
-  if (!url || !secret) throw new BackendError('not_configured', 'APPS_SCRIPT_URL and ADMIN_SECRET must be set');
+  if (!url || !key || !secret) {
+    throw new BackendError('not_configured', 'SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY and ADMIN_SECRET must be set');
+  }
 
-  // Apps Script answers POST with a 302 that must be fetched with GET; fetch does that.
-  const response = await fetch(url, {
+  const response = await fetch(url.replace(/\/$/, '') + '/rest/v1/rpc/api', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', apikey: key },
     body: JSON.stringify({ ...params, secret, action }),
     cache: 'no-store'
   });
@@ -29,6 +33,7 @@ export async function callBackend<T>(action: string, params: Record<string, unkn
   } catch {
     throw new BackendError('bad_response', `Backend did not return JSON (HTTP ${response.status})`);
   }
+  if (!response.ok) throw new BackendError(`http_${response.status}`, text.slice(0, 200));
   if (!body.success) throw new BackendError(body.error_code || 'unknown', body.error || 'Backend error');
   return body;
 }

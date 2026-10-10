@@ -25,7 +25,7 @@ checks `NEXT_PUBLIC_ADMIN_EMAIL_DOMAIN` / `ADMIN_EMAILS`, and only then calls th
 ```bash
 cp .env.example .env.local && npm install && npm run dev
 ```
-With `node ../backend/dev/server.js` running, the defaults in `.env.example` work as-is.
+Fill `ADMIN_SECRET` (Supabase → Vault → `aatce_admin_secret`); the Supabase URL and publishable key are pre-filled.
 ```bash
 npm test && npm run typecheck && npm run build
 ```

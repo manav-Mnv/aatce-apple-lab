@@ -1,11 +1,11 @@
 """
-sync_faces.py — Mirror Drive's Face-Dataset into a local folder via the backend.
+sync_faces.py — Mirror the enrollment photos from the backend into a local folder.
 
     python -m src.sync_faces --dataset-dir ./Face-Dataset
 
-Photos are stored as <dataset-dir>/<enrollment_no>/<drive_file_id>.jpg. Drive
-files are never edited after upload, so a file that already exists locally is
-not downloaded again, and local files whose Drive photo was deleted are removed.
+Photos are stored as <dataset-dir>/<enrollment_no>/<photo_id>.jpg. Photos are
+never edited after upload, so a file that already exists locally is not
+downloaded again, and local files whose photo was deleted are removed.
 
 The workflow deliberately does not cache this folder: in a public repo, pull
 requests from forks can restore caches, which would expose the photos.
@@ -67,7 +67,7 @@ def sync(client: BackendClient, dataset_dir: str) -> Tuple[int, int]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Mirror Face-Dataset from Drive")
+    parser = argparse.ArgumentParser(description="Mirror enrollment photos from the backend")
     parser.add_argument("--dataset-dir", required=True)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")

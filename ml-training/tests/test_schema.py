@@ -2,7 +2,7 @@
 test_schema.py — Tests that embeddings output matches the canonical schema.
 
 This is the critical contract test — the kiosk app, backend, and ML pipeline
-all depend on this exact schema (SRS §6, backend/API_CONTRACT.md).
+all depend on this exact schema (SRS §6, supabase/API_CONTRACT.md).
 """
 
 import json

@@ -35,7 +35,7 @@ const Context = createContext<LabContext | null>(null);
 
 /**
  * The last response is kept in sessionStorage so a reload shows data instantly while
- * fresh data loads (an Apps Script call takes 2–4 s). sessionStorage, not localStorage:
+ * fresh data loads. sessionStorage, not localStorage:
  * student data is cleared when the tab closes and on sign-out, so it never stays on a
  * shared computer.
  */

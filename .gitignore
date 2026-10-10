@@ -22,8 +22,5 @@ venv/
 Face-Dataset/
 ml-training/output/
 
-# Apps Script (per developer)
-backend/.clasp.json
-
 # Local dev tooling
 .claude/

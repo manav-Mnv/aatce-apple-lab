@@ -1,4 +1,4 @@
-/** Shapes returned by the backend's admin actions (backend/API_CONTRACT.md). */
+/** Shapes returned by the backend's admin actions (supabase/API_CONTRACT.md). */
 
 export interface AttendanceEntry {
   session_id: string;

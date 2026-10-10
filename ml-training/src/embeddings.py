@@ -8,7 +8,7 @@ Core ML (export_coreml.py), so both sides see identical preprocessing:
 
     pixels (RGB, 0–255) → (x − 127.5) / 128 → InceptionResnetV1 (VGGFace2) → 512-d, L2-normalised
 
-Output schema (SRS §6, backend/API_CONTRACT.md):
+Output schema (SRS §6, supabase/API_CONTRACT.md):
     { "version": int, "generated_at": ISO 8601, "model_version": str,
       "entries": [ { "enrollment_no": str, "embedding_vector": [512 floats] } ] }
 """

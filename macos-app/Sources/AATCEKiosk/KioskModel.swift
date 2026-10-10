@@ -110,7 +110,7 @@ final class KioskModel: ObservableObject {
             problems.append("Cannot open \(KioskPaths.directory.path): \(error.localizedDescription)")
         }
         if client == nil {
-            problems.append("Backend URL or kiosk secret is not set. Open Settings (⌘,).")
+            problems.append("Supabase URL, publishable key or kiosk secret is not set. Open Settings (⌘,).")
         }
         rebuildMatcher()
         phase = problems.isEmpty ? .idle(.searching) : .needsSetup(problems)
