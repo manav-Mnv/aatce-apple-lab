@@ -1,341 +1,118 @@
-# API Contract — AATCE Backend (Apps Script Web App)
+# API Contract — AATCE backend (Apps Script web app)
 
-> **Version:** 1.2.0  
-> **Base URL:** `https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec`  
-> **Auth:** JSON body `secret` on every request (see Authentication below)
-> **Methods:** POST only (GET is disabled)
+> **Version 2.0.0** · Base URL `https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec`
+> Every call: **HTTP POST**, `Content-Type: application/json`, body `{ "secret": "...", "action": "...", ...params }`.
 
----
+## Transport rules
+- Apps Script cannot read custom headers, so the secret is in the JSON body — never in the URL.
+- Apps Script answers a POST with **302** to `script.googleusercontent.com/...`, which must be fetched with **GET** (browsers, `fetch`, `urllib`, `URLSession` and `curl -L` without `-X POST` all do this). Do not re-POST the redirect.
+- The HTTP status is always 200; success or failure is in the body. Every response has `success`.
+- GET is only used for the student activity-form link (`?session=<uuid>`); any other GET returns `method_not_allowed`.
 
-## Authentication (FR-13, NFR-4)
+## Roles
+The secret decides the role. Each role may only call its own actions; others return `forbidden`.
 
-Due to Google Apps Script platform limitations, custom HTTP headers (like `X-Shared-Secret`) are not exposed to the `doPost` or `doGet` event objects in deployed web apps. 
-
-To ensure the secret is not logged in URL query parameters (which appear in server logs and browser history), **all requests must be sent as HTTP POST** with the secret embedded directly in the JSON body payload.
-
-**Example:**
-```json
-{
-  "secret": "<YOUR_SECRET>",
-  "action": "status"
-}
-```
-
-**Error responses:**
-```json
-{ "success": false, "error": "Missing authentication: include \"secret\" in JSON body", "error_code": "auth_missing" }
-{ "success": false, "error": "Invalid authentication secret", "error_code": "auth_invalid" }
-```
-
----
-
-## Error Responses
-
-All errors include a machine-readable `error_code` so callers can branch without string-matching:
-
-```json
-{
-  "success": false,
-  "error": "<human-readable message>",
-  "error_code": "<machine-readable code>"
-}
-```
-
-| error_code | Meaning | HTTP-equivalent |
+| Role | Script Property | Actions |
 |---|---|---|
-| `auth_missing` | No secret provided | 401 |
-| `auth_invalid` | Wrong secret | 403 |
-| `auth_misconfigured` | Server-side secret not set | 500 |
-| `validation_error` | Missing/invalid required fields | 400 |
-| `cooldown` | Scan cooldown active (FR-11) — includes `cooldown_remaining_seconds` | 429 |
-| `unknown_action` | Unrecognized `action` parameter | 400 |
-| `invalid_json` | POST body is not valid JSON | 400 |
-| `server_error` | Internal server error | 500 |
-| `method_not_allowed` | Request sent via GET instead of POST | 405 |
+| kiosk | `KIOSK_SECRET` | `status`, `lookup`, `enroll`, `upload_faces`, `scan`, `embeddings_version`, `embeddings_download` |
+| pipeline | `PIPELINE_SECRET` | `status`, `embeddings_version`, `face_manifest`, `face_images`, `publish_embeddings` |
+| admin | `ADMIN_SECRET` | `status`, `embeddings_version`, `occupancy`, `attendance_log`, `students`, `workshop_attendees` |
+
+## Errors
+```json
+{ "success": false, "error": "<human-readable>", "error_code": "<code>" }
+```
+| `error_code` | Meaning | Kiosk treats as |
+|---|---|---|
+| `auth_missing` / `auth_invalid` | no / wrong secret | permanent |
+| `auth_misconfigured` | no secrets set on the server | permanent |
+| `forbidden` | action not allowed for this role | permanent |
+| `validation_error` | missing or malformed input | permanent |
+| `consent_required` | `enroll` without `consent: true` | permanent |
+| `not_enrolled` | unknown enrollment number (scan) / photos before enroll | permanent |
+| `not_found` | nothing published yet / file not in Face-Dataset | permanent |
+| `cooldown` | scan within 2 min of the last one; adds `cooldown_remaining_seconds` | permanent |
+| `version_conflict` | published version not greater than current | permanent |
+| `unknown_action` / `invalid_json` / `method_not_allowed` | malformed request | permanent |
+| `server_error` | exception (sheet missing, lock timeout, Google outage) | **retryable** |
+
+`enrollment_no` everywhere must match `^[A-Za-z0-9_-]{1,32}$` (surrounding spaces are trimmed). Times are ISO 8601 in Asia/Kolkata (`2026-10-05T09:00:00+05:30`).
 
 ---
 
-## Endpoints (All POST)
+## Any role
 
-### `POST /exec` — Enroll (FR-1 through FR-6)
+### `status`
+→ `{ "success": true, "status": "online", "timestamp": "...", "version": "2.0.0" }`
 
-**Body:**
-```json
-{
-  "secret": "<secret>",
-  "action": "enroll",
-  "enrollment_no": "2021001",
-  "name": "Alice Student",
-  "email": "alice@paruluniversity.ac.in"
-}
-```
-- `name` and `email` required only for new students (not in Master_Students)
+### `embeddings_version`
+→ `{ "success": true, "version": 3, "generated_at": "2026-10-05T03:00:00+00:00", "model_version": "facenet-inceptionresnetv1-vggface2", "entry_count": 152 }`
+(`version: 0` and empty strings before the first publish.)
 
-**Response (existing student):**
-```json
-{
-  "success": true,
-  "enrollment_no": "2021001",
-  "name": "Alice Student",
-  "email": "alice@paruluniversity.ac.in",
-  "is_new": false,
-  "face_dataset_path": "/Face-Dataset/2021001/",
-  "registered_at": "2026-10-01T10:00:00+05:30"
-}
-```
+## Kiosk
 
-**Response (new student):**
-```json
-{
-  "success": true,
-  "enrollment_no": "2025999",
-  "name": "New Person",
-  "email": "new@test.com",
-  "is_new": true,
-  "face_dataset_path": "/Face-Dataset/2025999/",
-  "registered_at": "2026-10-01T14:30:00+05:30"
-}
-```
+### `lookup` — `{ enrollment_no }`
+Shows who is enrolling before consent. Email is masked.
+→ `{ "success": true, "enrollment_no": "2021001", "is_member": true, "is_enrolled": false, "name": "Alice Student", "email_hint": "al•••@paruluniversity.ac.in", "photo_count": 0 }`
 
-**Errors:** `validation_error` (missing enrollment_no, or missing name/email for new student)
+### `enroll` — `{ enrollment_no, consent: true, name?, email? }`
+Members: identity comes from `Master_Students` (`name`/`email` ignored). Non-members: `name` and a valid `email` required. Records consent time in `Face_Enrollments`; re-enrolling updates the same row.
+→ `{ "success": true, "enrollment_no": "W100", "name": "Guest User", "email_hint": "gu•••@gmail.com", "is_member": false, "is_new": true, "photo_count": 0 }`
+Errors: `consent_required`, `validation_error`.
 
----
+### `upload_faces` — `{ enrollment_no, images: [base64 JPEG, …] }`
+1–5 JPEGs, each ≤ 200 KB (the kiosk sends 160×160 face crops). Saved to `Face-Dataset/<enrollment_no>/<yyyyMMdd-HHmmss>-<n>.jpg`; never overwrites.
+→ `{ "success": true, "enrollment_no": "W100", "saved": 5, "photo_count": 5 }`
+Errors: `not_enrolled` (call `enroll` first), `validation_error`.
 
-### `POST /exec` — Scan (FR-7 through FR-12)
+### `scan` — `{ enrollment_no, method?: "face"|"manual", scanned_at?, workshop_name? }`
+- `scanned_at`: original time of a scan replayed from the offline queue; must be within 24 h (≤ 2 min in the future is clamped).
+- `method: "manual"` → `notes` gets `manual entry` / `manual exit`.
 
-**Body:**
-```json
-{
-  "secret": "<secret>",
-  "action": "scan",
-  "enrollment_no": "2021001"
-}
-```
+Entry → `{ "success": true, "action": "entry", "session_id": "uuid", "enrollment_no": "2021001", "name": "Alice Student", "entry_time": "..." }`
+Exit → `{ ..., "action": "exit", "entry_time": "...", "exit_time": "...", "duration_mins": 90, "activity_email_sent": true }` (email only when ≥ 15 min)
+Workshop attendee → `{ "success": true, "action": "workshop_attendee", "enrollment_no": "W100", "name": "Guest User", "already_logged": false }`
+Errors: `cooldown` (+ `cooldown_remaining_seconds`), `not_enrolled`, `validation_error`.
 
-**Response (entry — no open session today):**
-```json
-{
-  "success": true,
-  "action": "entry",
-  "session_id": "a1b2c3d4-uuid",
-  "enrollment_no": "2021001",
-  "entry_time": "2026-10-01T09:00:00+05:30"
-}
-```
+### `embeddings_download`
+→ `{ "success": true, "embeddings": { "version": 3, "generated_at": "...", "model_version": "...", "entries": [ { "enrollment_no": "2021001", "embedding_vector": [512 floats] } ] } }`
+Error: `not_found` before the first publish.
 
-**Response (exit — open session found):**
-```json
-{
-  "success": true,
-  "action": "exit",
-  "session_id": "a1b2c3d4-uuid",
-  "enrollment_no": "2021001",
-  "entry_time": "2026-10-01T09:00:00+05:30",
-  "exit_time": "2026-10-01T11:30:00+05:30",
-  "duration_mins": 150
-}
-```
+## Pipeline
 
-**Response (cooldown — FR-11):**
-```json
-{
-  "success": false,
-  "error": "Cooldown active. Please wait 85 seconds.",
-  "error_code": "cooldown",
-  "cooldown_remaining_seconds": 85
-}
-```
+### `face_manifest`
+→ `{ "success": true, "people": [ { "enrollment_no": "2021001", "files": [ { "id": "<drive id>", "name": "20261005-100000-1.jpg", "size": 8123 } ] } ] }`
 
-**Response (not in Master_Students — FR-12):**
-```json
-{
-  "success": true,
-  "action": "workshop_attendee",
-  "enrollment_no": "9999999",
-  "message": "Logged as workshop attendee (not in Master_Students roster)"
-}
-```
+### `face_images` — `{ file_ids: [1–25 ids] }`
+Only files inside `Face-Dataset/<enrollment_no>/` are served.
+→ `{ "success": true, "images": [ { "file_id": "...", "data": "<base64 JPEG>" } ] }`
+Errors: `not_found`, `validation_error`.
 
-**Errors:** `validation_error`, `cooldown`
+### `publish_embeddings` — `{ embeddings: {embeddings.json object} }`
+Validated: `version` integer > current, `generated_at` and `model_version` non-empty strings, every entry a valid unique `enrollment_no` with exactly **512** finite numbers. Stored as `Embeddings/embeddings-v<N>.json` (private).
+→ `{ "success": true, "version": 4, "entry_count": 152 }`
+Errors: `validation_error`, `version_conflict`.
+
+## Admin
+
+### `occupancy`
+Today's sessions without an exit.
+→ `{ "success": true, "count": 2, "people": [ { "session_id": "...", "enrollment_no": "...", "name": "...", "batch_tags": "SCC/5-7", "entry_time": "..." } ] }`
+
+### `attendance_log` — `{ date?: "yyyy-MM-dd", enrollment_no? }`
+→ `{ "success": true, "count": N, "entries": [ { session_id, enrollment_no, entry_time, exit_time, duration_mins, activity_form_status, activity_description, email_sent, notes } ] }`
+
+### `students` — `{ batch? }`
+Roster joined with enrollment status (only the mapped `Master_Students` columns are returned).
+→ `{ "success": true, "count": N, "students": [ { enrollment_no, name, email, batch_tags, face_enrolled, photo_count, consent_at } ] }`
+
+### `workshop_attendees`
+→ `{ "success": true, "count": N, "attendees": [ { id, name, enrollment_no, email, workshop_name, date } ] }`
 
 ---
 
-### `POST /exec` — Update Embeddings Metadata
+## Activity form (students, no secret)
+`GET <WEB_APP_URL>?session=<session_id>` renders the form; it submits through `google.script.run.submitActivity(sessionId, text)` (1–1000 characters, once per session).
 
-**Body:**
-```json
-{
-  "secret": "<secret>",
-  "action": "update_embeddings_meta",
-  "version": 2,
-  "generated_at": "2026-10-01T12:00:00+05:30",
-  "model_version": "facenet-v2",
-  "drive_file_id": "1AbCdEfGhIjKlMnOpQrStUvWxYz",
-  "entry_count": 152
-}
-```
-Called by the ML pipeline after uploading `embeddings.json` to Drive.
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Embeddings metadata updated",
-  "version": 2
-}
-```
-
----
-
-### `POST /exec` — Embeddings Version Check
-
-The kiosk calls this to check whether a newer `embeddings.json` is available.
-If `version > local_version`, the kiosk downloads the file directly from Drive
-using `download_url`. The full embedding vectors are **never** routed through
-Apps Script (NFR-7).
-
-**Body:**
-```json
-{
-  "secret": "<secret>",
-  "action": "embeddings_version"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "version": 3,
-  "generated_at": "2026-10-01T12:00:00+05:30",
-  "model_version": "facenet-v1",
-  "drive_file_id": "1AbCdEfGhIjKlMnOpQrStUvWxYz",
-  "entry_count": 152,
-  "download_url": "https://drive.google.com/uc?export=download&id=1AbCdEfGhIjKlMnOpQrStUvWxYz"
-}
-```
-
----
-
-### `POST /exec` — Health Check
-
-**Body:**
-```json
-{
-  "secret": "<secret>",
-  "action": "status"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "status": "online",
-  "timestamp": "2026-10-01T14:00:00+05:30",
-  "version": "1.0.0"
-}
-```
-
----
-
-### `POST /exec` — Attendance Log (FR-20)
-
-**Body:**
-```json
-{
-  "secret": "<secret>",
-  "action": "attendance_log",
-  "date": "2026-10-01",
-  "enrollment_no": "2021001"
-}
-```
-(Both `date` and `enrollment_no` are optional filters)
-
-**Response:**
-```json
-{
-  "success": true,
-  "count": 2,
-  "entries": [
-    {
-      "session_id": "...",
-      "enrollment_no": "2021001",
-      "entry_time": "2026-10-01T09:00:00+05:30",
-      "exit_time": "2026-10-01T11:30:00+05:30",
-      "duration_mins": 150,
-      "activity_form_status": "completed",
-      "activity_description": "Worked on SwiftUI tutorial",
-      "email_sent": "yes",
-      "notes": ""
-    }
-  ]
-}
-```
-
----
-
-### `POST /exec` — Student Roster (FR-20)
-
-**Body:**
-```json
-{
-  "secret": "<secret>",
-  "action": "students",
-  "batch": "SCC/5-7",
-  "enrollment_no": "2021001"
-}
-```
-(Both `batch` and `enrollment_no` are optional filters)
-
-**Response:**
-```json
-{
-  "success": true,
-  "count": 2,
-  "students": [
-    {
-      "enrollment_no": "2021001",
-      "name": "Alice Student",
-      "email": "alice@paruluniversity.ac.in",
-      "batch_tags": "SCC/5-7",
-      "face_dataset_path": "/Face-Dataset/2021001/",
-      "registered_at": "2026-01-15T10:00:00+05:30"
-    }
-  ]
-}
-```
-
----
-
-## Embeddings Architecture
-
-```
-ML Pipeline (GitHub Actions)
-  │
-  ├─ generates embeddings.json
-  ├─ uploads to Google Drive ──────────────────────┐
-  └─ calls POST update_embeddings_meta             │
-       │                                           │
-       v                                           v
-  Apps Script (Embeddings Sheet tab)         Google Drive
-  stores: version, drive_file_id            stores: embeddings.json
-       │                                           │
-       v                                           v
-  Kiosk: POST embeddings_version ──► if new ──► download from Drive
-```
-
-**embeddings.json schema** (stored in Drive, generated by ML pipeline):
-```json
-{
-  "version": "<integer, auto-incrementing>",
-  "generated_at": "<ISO 8601 timestamp>",
-  "model_version": "<string, e.g. 'facenet-v1'>",
-  "entries": [
-    {
-      "enrollment_no": "<string>",
-      "embedding_vector": ["<array of floats, 512 dimensions>"]
-    }
-  ]
-}
-```
+## Changes from v1.2.0
+New roles and `forbidden`; new `lookup`, `upload_faces`, `embeddings_download`, `face_manifest`, `face_images`, `publish_embeddings`, `occupancy`, `workshop_attendees`; `enroll` requires consent and no longer writes `Master_Students`; `scan` gains `name`, `method`, `scanned_at`, `not_enrolled`; `embeddings_version` no longer returns a public Drive download URL; `update_embeddings_meta` removed.

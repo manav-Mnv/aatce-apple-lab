@@ -1,64 +1,41 @@
-# Backend — AATCE Apple Lab Attendance System
+# Backend — Google Apps Script web app
 
-Google Apps Script Web App serving as the server-side glue for the AATCE attendance system (per [SRS v2.0 §2–3](../docs/SRS.md)).
+The only server in the system: JSON API for the kiosk, the ML pipeline and the admin portal; the
+student activity form; the nightly stale-session job. Reads/writes Google Sheets and Drive and
+sends mail as the deploying account.
 
-## Architecture
+- API: [API_CONTRACT.md](API_CONTRACT.md) (v2.0.0)
+- Setup and deployment: [../docs/SETUP.md](../docs/SETUP.md) Part 1–3
+- Design and algorithms: [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)
 
-- **Runtime:** Google Apps Script (V8)
-- **Data store:** Google Sheets (no separate DB)
-- **Auth:** Shared-secret header on every request ([NFR-4](../docs/SRS.md))
-- **Writes:** All Sheet writes wrapped in `LockService` to prevent concurrent-write corruption
+## Files (`src/` is exactly what gets pushed to Apps Script)
 
-## Project Structure
+| File | Responsibility |
+|---|---|
+| `appsscript.json` | Manifest: V8, Asia/Kolkata, web app *execute as me / anyone (anonymous)*, OAuth scopes |
+| `Main.gs` | `doPost` router (auth → role check → lock for writes), `doGet` (activity form only) |
+| `Auth.gs` | Per-role secrets, constant-time comparison |
+| `Config.gs` | Tab names, headers, `MASTER_COLUMNS`, `ROLE_ACTIONS`, limits and thresholds |
+| `Sheets.gs` | Table read by header name, append/update, formula-injection guard, script lock, time helpers |
+| `Enroll.gs` | `lookup`, `enroll` (consent), `upload_faces` |
+| `Scan.gs` | `scan`: entry/exit, cooldown, workshop attendees, offline `scanned_at`, manual audit |
+| `Activity.gs` + `ActivityForm.html` | Activity email, form page, `submitActivity`, nightly `closeStaleSessions` |
+| `Embeddings.gs` | `embeddings_version`, `embeddings_download`, `face_manifest`, `face_images`, `publish_embeddings` |
+| `Admin.gs` | `occupancy`, `attendance_log`, `students`, `workshop_attendees` |
+| `Setup.gs` | Owner-only `setupSheets()` and `installTriggers()` |
 
-```
-backend/
-├── appsscript.json          # Apps Script manifest (OAuth scopes, webapp config)
-├── src/
-│   ├── Main.gs              # doPost/doGet router — entry points
-│   ├── Auth.gs              # Shared-secret validation
-│   ├── Config.gs            # Central configuration (sheet names, columns, constants)
-│   ├── SheetHelpers.gs      # Data access layer (batch reads, safe writes)
-│   ├── Enroll.gs            # /enroll endpoint (FR-1 through FR-6)
-│   ├── Scan.gs              # /scan endpoint (FR-7 through FR-12)
-│   └── Embeddings.gs        # /embeddings endpoint (read/write embedding store)
-├── tests/
-│   └── test_backend.js      # Node.js unit tests (mocks Apps Script globals)
-└── API_CONTRACT.md          # Full API documentation for consumers
-```
+Internal functions end in `_` (private in Apps Script), so the activity-form page cannot call them.
 
-## Setup
-
-### 1. Google Sheets
-Create two Google Sheets:
-- **Master Sheet** — tab: `Master_Students` (columns: `enrollment_no, name, email, batch_tags, face_dataset_path, registered_at`)
-- **AATCE Sheet** — tabs: `Attendance_Log`, `Other_Workshop_Attendees`, `Embeddings`
-
-### 2. Script Properties
-In the Apps Script editor → Project Settings → Script Properties, set:
-- `SHARED_SECRET` — a random string (never committed to repo)
-- `MASTER_SHEET_ID` — the Spreadsheet ID of the Master Sheet
-- `ATTENDANCE_SHEET_ID` — the Spreadsheet ID of the AATCE Sheet
-
-### 3. Deploy
-Deploy as a web app (Execute as: Me, Access: Anyone).
-
-### 4. `clasp` (optional, for local dev)
-```bash
-npm install -g @google/clasp
-clasp login
-clasp clone <SCRIPT_ID>
-# Edit locally, then:
-clasp push
-```
-
-## Testing
+## Develop and test
 
 ```bash
-# Run unit tests (no Google account needed):
 node tests/test_backend.js
 ```
+51 tests run the real `src/*.gs` files against in-memory Sheets/Drive/Mail/Lock/clock (`tests/gas-mocks.js`).
 
-## API
+```bash
+node dev/server.js
+```
+Local backend on `http://localhost:8787/exec` with seeded fictional data (secrets `dev-kiosk-secret`, `dev-pipeline-secret`, `dev-admin-secret`).
 
-See [API_CONTRACT.md](API_CONTRACT.md) for full endpoint documentation.
+Deploy with clasp: copy `.clasp.json.example` to `.clasp.json`, add your Script ID, then `clasp push --force` and **Deploy → Manage deployments → Edit → New version** (keeps the URL).
