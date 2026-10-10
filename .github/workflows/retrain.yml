@@ -1,7 +1,7 @@
 name: Retrain embeddings
 
-# Weekly: download face photos through the backend → generate embeddings →
-# publish them through the backend. Nothing biometric is committed, cached or
+# Weekly: download face photos from Supabase → generate embeddings →
+# publish them to Supabase. Nothing biometric is committed, cached or
 # uploaded as an artifact (the repo is public).
 on:
   schedule:
@@ -19,7 +19,8 @@ jobs:
   retrain:
     runs-on: ubuntu-latest
     env:
-      APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
       PIPELINE_SECRET: ${{ secrets.PIPELINE_SECRET }}
     defaults:
       run:
@@ -30,8 +31,8 @@ jobs:
       - name: Check configuration
         id: config
         run: |
-          if [ -z "$APPS_SCRIPT_URL" ] || [ -z "$PIPELINE_SECRET" ]; then
-            echo "::notice::APPS_SCRIPT_URL / PIPELINE_SECRET secrets are not set — skipping (see docs/SETUP.md)."
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_PUBLISHABLE_KEY" ] || [ -z "$PIPELINE_SECRET" ]; then
+            echo "::notice::SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY / PIPELINE_SECRET secrets are not set — skipping (see docs/SETUP.md)."
             echo "ready=false" >> "$GITHUB_OUTPUT"
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"

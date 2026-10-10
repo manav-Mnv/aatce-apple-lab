@@ -6,8 +6,8 @@ The kiosk is a native macOS app, **AATCE Kiosk.app**. It needs:
 |---|---|
 | macOS | **13 Ventura or newer** (Intel or Apple silicon) |
 | Camera | built-in FaceTime camera or any USB webcam |
-| Network | internet access to `script.google.com` (works offline for a while — scans are queued) |
-| From [SETUP.md](SETUP.md) | the **web app URL** (`…/exec`) and the **`KIOSK_SECRET`** |
+| Network | internet access to `*.supabase.co` (works offline for a while — scans are queued) |
+| From Supabase ([SETUP.md](SETUP.md)) | the **project URL**, the **publishable key** and **`aatce_kiosk_secret`** (Vault) |
 | Face model | `FaceNet` Core ML model — already inside the app if you use option A |
 
 ---
@@ -55,16 +55,16 @@ Runs in a window (not full screen). The camera permission is asked for Terminal.
 ## 2. First launch
 1. **Camera access:** click **OK/Allow**. If you clicked *Don't Allow*: **System Settings → Privacy & Security → Camera → AATCE Kiosk → on**, then restart the app.
 2. The screen says **"Kiosk setup needed"** — expected. Press **⌘ ,** (Settings):
-   - **Web app URL:** the `…/exec` URL.
-   - **Kiosk secret:** paste `KIOSK_SECRET`. It goes into the macOS Keychain and is never shown again (paste a new one to replace it).
+   - **Supabase project URL:** `https://mlwbcifxunliyvxxfblo.supabase.co`
+   - **Publishable key:** `sb_publishable_…` (Supabase → Project Settings → API Keys).
+   - **Kiosk secret:** paste `aatce_kiosk_secret` from Supabase → Integrations → Vault. It goes into the macOS Keychain and is never shown again (paste a new one to replace it).
    - **Workshop name** (optional): written next to non-member check-ins, e.g. `Intro to SwiftUI`.
    - **Match threshold:** leave **0.65** unless tuning (higher = stricter).
    - **Save.**
 3. The kiosk shows **"Look at the camera"** and the status pill bottom-right reads **Online · N faces**.
    `0 faces` is normal until people enroll and/or the first retrain runs.
 
-To try it without real Google resources, run `node backend/dev/server.js` on the same Mac and use
-`http://localhost:8787/exec` with secret `dev-kiosk-secret`.
+Every scan is visible right away in Supabase → Table Editor → `lab.sessions`, and in the admin portal.
 
 ---
 
@@ -104,8 +104,8 @@ Settings, the Keychain secret, queued scans and local enrollments are kept
 |---|---|
 | "Face model not found" | You used a build without the model: use option A, or put `FaceNet.mlpackage` in `~/Library/Application Support/AATCEKiosk/` and restart. |
 | "Backend URL or kiosk secret is not set" | ⌘, → fill both → Save. URL must start with `https://` (only `http://localhost` is allowed otherwise). |
-| "Kiosk not authorised" | Wrong or rotated `KIOSK_SECRET` — paste the current one in Settings. |
-| Pill says **Offline** | Check internet; open the web app URL in Safari — you should see a JSON `method_not_allowed` message. |
+| "Kiosk not authorised" | Wrong or rotated kiosk secret — paste the current `aatce_kiosk_secret` from Vault in Settings. |
+| Pill says **Offline** | Check internet. If the lab was closed for over a week, the free Supabase project may be paused: Supabase dashboard → **Restore project**. |
 | Pill orange "needs attention" — *model mismatch* | The published embeddings were made with a different model version. Re-export the model / rebuild the app from the same commit as the pipeline. |
 | Black camera circle | Another app is using the camera, or permission is off (see §2.1). |
 | Recognises the wrong person | Raise the threshold (e.g. 0.70) in Settings; ask both students to re-enroll in good light. |

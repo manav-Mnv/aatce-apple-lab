@@ -1,6 +1,4 @@
 import type { Metadata, Viewport } from 'next';
-import { LabProvider } from '@/components/LabProvider';
-import { Shell } from '@/components/Shell';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -18,11 +16,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>
-        <LabProvider>
-          <Shell>{children}</Shell>
-        </LabProvider>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

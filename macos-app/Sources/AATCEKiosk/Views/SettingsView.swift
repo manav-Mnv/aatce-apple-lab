@@ -11,7 +11,8 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Backend") {
-                TextField("Web app URL", text: $settings.backendURL, prompt: Text("https://script.google.com/macros/s/…/exec"))
+                TextField("Supabase project URL", text: $settings.projectURL, prompt: Text("https://xxxx.supabase.co"))
+                TextField("Publishable key", text: $settings.publishableKey, prompt: Text("sb_publishable_…"))
                 SecureField("Kiosk secret", text: $secret,
                             prompt: Text(SecretStore.read() == nil ? "Paste KIOSK_SECRET" : "Saved in Keychain — paste to replace"))
                 TextField("Workshop name (optional)", text: $settings.workshopName,

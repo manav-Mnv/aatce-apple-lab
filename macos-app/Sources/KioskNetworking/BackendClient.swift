@@ -1,21 +1,26 @@
 import Foundation
 
 public struct BackendConfiguration: Sendable, Equatable {
-    public let baseURL: URL
+    /// Supabase project URL, e.g. https://abcd.supabase.co
+    public let projectURL: URL
+    /// The project's publishable key (public; identifies the project, grants nothing by itself).
+    public let publishableKey: String
+    /// The kiosk role secret — this is what authorises the calls.
     public let secret: String
 
-    public init(baseURL: URL, secret: String) {
-        self.baseURL = baseURL
+    public init(projectURL: URL, publishableKey: String, secret: String) {
+        self.projectURL = projectURL
+        self.publishableKey = publishableKey
         self.secret = secret
     }
+
+    var endpoint: URL { projectURL.appendingPathComponent("rest/v1/rpc/api") }
 }
 
-/// Kiosk-role client for the Apps Script backend (`backend/API_CONTRACT.md` v2).
+/// Kiosk-role client for the Supabase backend (`supabase/API_CONTRACT.md`).
 ///
-/// Every call is a POST to `/exec` with `{ secret, action, ...params }` in the JSON body.
-/// Apps Script replies with a 302 to a googleusercontent.com URL that must be fetched
-/// with GET; URLSession's default redirect handling does exactly that (and drops the
-/// body, so the secret is not re-sent).
+/// Every call is a POST to `/rest/v1/rpc/api` with `{ secret, action, ...params }`
+/// as the JSON body and the publishable key in the `apikey` header.
 public struct BackendClient: Sendable {
     public let configuration: BackendConfiguration
     private let session: URLSession
@@ -79,9 +84,10 @@ public struct BackendClient: Sendable {
         body["secret"] = configuration.secret
         body["action"] = action
 
-        var request = URLRequest(url: configuration.baseURL)
+        var request = URLRequest(url: configuration.endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(configuration.publishableKey, forHTTPHeaderField: "apikey")
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
 
         let data: Data

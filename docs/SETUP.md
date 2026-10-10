@@ -1,226 +1,146 @@
-# Setup guide — Google, Apps Script, GitHub, Firebase, Vercel
+# Setup guide — Supabase, GitHub, email, Firebase, Vercel
 
-Do the parts in order. Part 1–3 make the backend work (needed by everything else). Part 4 turns on
-weekly retraining, Part 5 the admin portal. The kiosk iMac is covered in [MAC_SETUP.md](MAC_SETUP.md).
+The backend already exists: Supabase project **aatce-apple-lab** (Mumbai, free plan), with the
+database, API, tests, scheduled jobs and three role secrets set up. This guide is what *you* do
+around it. The iMac is covered in [MAC_SETUP.md](MAC_SETUP.md).
 
-> **Use one Google account for Parts 1–3** — ideally a club account (e.g. `scc.applelab@…`), not a
-> personal one. The backend runs as that account, and it owns the sheets, folders and emails.
-> **Never** paste secrets into the repo, chat, issues or commit messages.
+> **Never** paste secrets into the repo, chat, issues or commit messages. Copy them from Supabase
+> Vault straight into the place that needs them.
 
 ---
 
 ## Where every value goes (cheat sheet)
 
-| Value | How to get it | Put it in |
+| Value | Where to find it | Put it in |
 |---|---|---|
-| `MASTER_SHEET_ID` | URL of the SCC registration spreadsheet: `docs.google.com/spreadsheets/d/`**`<ID>`**`/edit` | Apps Script → Script Properties |
-| `ATTENDANCE_SHEET_ID` | URL of the new "AATCE Apple Lab" spreadsheet | Script Properties |
-| `FACE_DATASET_FOLDER_ID` | URL of Drive folder `Face-Dataset`: `drive.google.com/drive/folders/`**`<ID>`** | Script Properties |
-| `EMBEDDINGS_FOLDER_ID` | URL of Drive folder `Embeddings` | Script Properties |
-| `KIOSK_SECRET` | generate (below) | Script Properties **and** kiosk Settings |
-| `PIPELINE_SECRET` | generate | Script Properties **and** GitHub secret `PIPELINE_SECRET` |
-| `ADMIN_SECRET` | generate | Script Properties **and** Vercel env `ADMIN_SECRET` |
-| Web app URL (`…/exec`) | Apps Script → Deploy (Part 3) | Script Property `WEB_APP_URL`, GitHub secret `APPS_SCRIPT_URL`, Vercel env `APPS_SCRIPT_URL`, kiosk Settings |
-| Firebase `apiKey`, `authDomain`, `projectId`, `appId` | Firebase console (Part 5) | Vercel env `NEXT_PUBLIC_FIREBASE_*` |
-| Allowed admin domain / emails | your decision | Vercel env `NEXT_PUBLIC_ADMIN_EMAIL_DOMAIN`, `ADMIN_EMAILS` |
-
-**Generate a secret** (three different ones — never reuse one for two roles):
-```bash
-openssl rand -hex 32
-```
-(Windows PowerShell without OpenSSL: `-join ((1..32) | % { '{0:x2}' -f (Get-Random -Max 256) })`)
+| Project URL `https://mlwbcifxunliyvxxfblo.supabase.co` | Supabase → Project Settings → API | kiosk Settings, GitHub `SUPABASE_URL`, Vercel `SUPABASE_URL` |
+| Publishable key `sb_publishable_YzKz…TH0U` (public) | Supabase → Project Settings → **API Keys** | kiosk Settings, GitHub `SUPABASE_PUBLISHABLE_KEY`, Vercel `SUPABASE_PUBLISHABLE_KEY` |
+| `aatce_kiosk_secret` | Supabase → **Integrations → Vault** (click the eye to reveal) | kiosk Settings → Kiosk secret |
+| `aatce_pipeline_secret` | Vault | GitHub secret `PIPELINE_SECRET` |
+| `aatce_admin_secret` | Vault | Vercel `ADMIN_SECRET` (and `admin-portal/.env.local` for local use) |
+| Brevo API key | Brevo → SMTP & API → API Keys | Vault secret `brevo_api_key` (Part 3) |
+| Firebase `apiKey`, `authDomain`, `projectId`, `appId` | Firebase console (Part 4) | Vercel `NEXT_PUBLIC_FIREBASE_*` |
+| Allowed admin domain / emails | your decision | Vercel `NEXT_PUBLIC_ADMIN_EMAIL_DOMAIN`, `ADMIN_EMAILS` |
 
 ---
 
-## Part 1 — Google Sheets
+## Part 1 — Students (the roster)
 
-### 1.1 The roster: `Master_Students`
-This is the existing SCC registration sheet. The system **only reads** it.
-1. Open the SCC registration spreadsheet. Its tab must be named **`Master_Students`** (rename it, or change `TABS.MASTER_STUDENTS` in `backend/src/Config.gs`).
-2. Row 1 must contain these headers (any order, extra columns are fine): `enrollment_no`, `name`, `email`, `batch_tags`.
-   If the real headers differ (e.g. `Enrollment No`), edit the right-hand side of `MASTER_COLUMNS` in `backend/src/Config.gs` instead of renaming the sheet.
-3. `batch_tags`: one or more batches separated by commas, e.g. `SCC/5-7, SCC/3-5`.
-4. If this spreadsheet belongs to someone else, share it with the club account (**Viewer** is enough).
-5. Copy its ID from the URL → `MASTER_SHEET_ID`.
+1. https://supabase.com/dashboard → project **aatce-apple-lab** → **Table Editor**.
+2. Schema dropdown (top left) → **`lab`** → table **`students`**.
+3. Add people with **Insert → Insert row**, or bulk-import: in your Google Sheet use
+   **File → Download → CSV** with the columns `enrollment_no, name, email, batch_tags`, then
+   **Insert → Import data from CSV**.
+4. `batch_tags`: one or more batches separated by commas, e.g. `SCC/5-7, SCC/3-5`.
 
-### 1.2 The AATCE spreadsheet
-1. In the club account: Google Sheets → **Blank** → name it `AATCE Apple Lab`.
-2. Copy its ID → `ATTENDANCE_SHEET_ID`. (Tabs are created automatically in Part 3.6.)
-3. Optional but recommended: make a **copy of both sheets for testing** and a second Apps Script deployment that points at the copies, so you never test against real attendance (SRS §7).
+Only people in `students` count as SCC members; anyone else who enrolls on the kiosk is logged as
+a workshop attendee.
 
-## Part 2 — Google Drive
-1. In the club account's Drive: **New → Folder** `AATCE Apple Lab`.
-2. Inside it create two folders: `Face-Dataset` and `Embeddings`.
-3. Copy each folder's ID from its URL → `FACE_DATASET_FOLDER_ID`, `EMBEDDINGS_FOLDER_ID`.
-4. **Do not share** these folders with "Anyone with the link". Share only with lab maintainers if needed.
+## Part 2 — GitHub (weekly retrain + keep-alive)
 
-## Part 3 — Apps Script backend
-
-### 3.1 Create the project
-Go to https://script.google.com → **New project** → rename it `AATCE Backend`.
-
-### 3.2 Put the code in — choose A or B
-
-**A. With clasp (recommended, keeps it in sync with Git)** — on any computer with Node.js:
-```bash
-npm install -g @google/clasp
-```
-```bash
-clasp login
-```
-1. Turn on the Apps Script API once: https://script.google.com/home/usersettings → **Google Apps Script API: On**.
-2. In the script editor: **Project Settings (⚙)** → copy the **Script ID**.
-3. In the repo: copy `backend/.clasp.json.example` to `backend/.clasp.json` and paste the Script ID.
-4. Push the code:
-```bash
-cd backend && clasp push --force
-```
-This uploads everything in `backend/src/` (all `.gs` files, `ActivityForm.html`, `appsscript.json`).
-
-**B. Copy-paste (no tools)**
-1. Editor → **Project Settings** → tick **Show "appsscript.json" manifest file in editor**.
-2. Replace the manifest's content with `backend/src/appsscript.json`.
-3. For every file in `backend/src/`: **+ → Script** (or **HTML** for `ActivityForm`), name it exactly like the file without the extension (`Main`, `Auth`, `Config`, `Sheets`, `Enroll`, `Scan`, `Activity`, `Embeddings`, `Admin`, `Setup`, `ActivityForm`) and paste the content. Delete the default `Code.gs`.
-
-### 3.3 Script Properties
-Editor → **Project Settings** → **Script Properties** → **Add script property**, one per row:
-
-| Property | Value |
-|---|---|
-| `KIOSK_SECRET` | secret #1 |
-| `PIPELINE_SECRET` | secret #2 |
-| `ADMIN_SECRET` | secret #3 |
-| `MASTER_SHEET_ID` | from 1.1 |
-| `ATTENDANCE_SHEET_ID` | from 1.2 |
-| `FACE_DATASET_FOLDER_ID` | from Part 2 |
-| `EMBEDDINGS_FOLDER_ID` | from Part 2 |
-| `WEB_APP_URL` | leave for now — filled in 3.5 |
-
-### 3.4 Deploy as a web app
-1. **Deploy → New deployment** → ⚙ **Select type → Web app**.
-2. Description `v2.1.0`; **Execute as: Me**; **Who has access: Anyone** (the manifest says `ANYONE_ANONYMOUS`; the kiosk and GitHub Actions have no Google login — the secrets protect the API).
-3. **Deploy** → **Authorize access** → pick the club account → *Advanced → Go to AATCE Backend (unsafe)* → **Allow**. (Google shows this for every unverified personal script; the permissions are Sheets, Drive, send mail, triggers, your email address.)
-4. Copy the **Web app URL** (ends in `/exec`).
-
-### 3.5 Save the URL
-Add Script Property `WEB_APP_URL` = that URL (used in activity-form emails).
-
-### 3.6 Create tabs and the nightly trigger
-In the editor, choose function **`setupSheets`** in the toolbar → **Run**. Check the log: it creates
-`Attendance_Log`, `Other_Workshop_Attendees`, `Face_Enrollments`, `Embeddings` and reports
-`Master_Students OK: N rows`. Then run **`installTriggers`** once (schedules `closeStaleSessions` at 01:00).
-
-### 3.7 Test it
-```bash
-curl -L -H "Content-Type: application/json" -d '{"secret":"<KIOSK_SECRET>","action":"status"}' "<WEB_APP_URL>"
-```
-Expected: `{"success":true,"status":"online",...,"version":"2.1.0"}`.
-Use `-L` and **do not** add `-X POST` (Apps Script answers with a redirect that must be followed with GET).
-More checks: `"action":"lookup","enrollment_no":"<a real number>"` with the kiosk secret returns the student's name; `"action":"students"` with the kiosk secret must return `forbidden`.
-
-### 3.8 Updating the backend later (by hand)
-Only needed if you skip 3.9. Push/paste the new code, then **Deploy → Manage deployments → ✏ Edit → Version: New version → Deploy**.
-This keeps the **same URL**. ("New deployment" would create a new URL you'd have to update everywhere.)
-Saving alone is not enough: until you publish a new version, the live URL keeps running the old code.
-
-### 3.9 Automatic deploys (recommended — do this once)
-After this, every change to `backend/src/` merged to `master` is tested, pushed to Apps Script and
-published as a new version of the **same** URL by the **Deploy backend** workflow, which then checks
-that the live backend really runs the new version. No more copy-paste.
-
-1. On your PC, sign in to clasp **with the Google account that owns the script** (opens a browser):
-   ```bash
-   npx @google/clasp@3.4.1 login
-   ```
-2. Turn on the Apps Script API for that account: https://script.google.com/home/usersettings → **On**.
-3. Add three GitHub secrets (Settings → Secrets and variables → Actions):
+Repo → **Settings → Secrets and variables → Actions → New repository secret** (or the commands below):
 
 | Secret | Value |
 |---|---|
-| `CLASPRC_JSON` | the whole content of the `.clasprc.json` file in your home folder (Windows: `C:\Users\<you>\.clasprc.json`), created by step 1 |
-| `APPS_SCRIPT_ID` | Apps Script → Project Settings → **Script ID** |
-| `APPS_SCRIPT_DEPLOYMENT_ID` | Deploy → Manage deployments → your **Web app** → **Deployment ID** (starts with `AKfycb…`) |
+| `SUPABASE_URL` | `https://mlwbcifxunliyvxxfblo.supabase.co` |
+| `SUPABASE_PUBLISHABLE_KEY` | the publishable key |
+| `PIPELINE_SECRET` | Vault → `aatce_pipeline_secret` |
 
-   Or from PowerShell in the project folder (the last two ask for the value):
-   ```powershell
-   gh secret set CLASPRC_JSON --repo manav-Mnv/aatce-apple-lab --body (Get-Content "$HOME\.clasprc.json" -Raw)
+```powershell
+gh secret set SUPABASE_URL --repo manav-Mnv/aatce-apple-lab --body "https://mlwbcifxunliyvxxfblo.supabase.co"
+```
+```powershell
+gh secret set SUPABASE_PUBLISHABLE_KEY --repo manav-Mnv/aatce-apple-lab --body "sb_publishable_YzKz9KDj3humCQ5Vu1Da2Q_eCZnTH0U"
+```
+```powershell
+gh secret set PIPELINE_SECRET --repo manav-Mnv/aatce-apple-lab
+```
+(The last one asks for the value — paste it from Vault.) You can delete the old `APPS_SCRIPT_URL`
+secret. Test: **Actions → Keep Supabase awake → Run workflow** → green with "Supabase is awake".
+
+- **Retrain embeddings** runs every Sunday 03:00 IST (skips quietly until someone enrolls).
+- **Keep Supabase awake** pings every 3 days — free projects pause after 7 idle days (holidays).
+- **Kiosk release** builds the iMac app — see [MAC_SETUP.md](MAC_SETUP.md).
+
+## Part 3 — Activity emails (Brevo, free 300/day, no card)
+
+1. Sign up at https://www.brevo.com (free plan).
+2. **Senders, Domains & Dedicated IPs → Senders → Add a sender**: e.g. `applelab.scc@gmail.com`
+   — click the link Brevo emails you to verify it.
+3. **SMTP & API → API Keys → Generate a new API key** → copy it.
+4. Supabase → **SQL Editor** → run (fill in your values):
+   ```sql
+   select vault.create_secret('<BREVO API KEY>', 'brevo_api_key');
+   insert into lab.settings (key, value) values
+     ('sender_email', 'applelab.scc@gmail.com'),
+     ('sender_name',  'AATCE Apple Lab'),
+     ('portal_url',   'https://<your-portal>.vercel.app')
+   on conflict (key) do update set value = excluded.value;
    ```
-   ```powershell
-   gh secret set APPS_SCRIPT_ID --repo manav-Mnv/aatce-apple-lab
-   ```
-   ```powershell
-   gh secret set APPS_SCRIPT_DEPLOYMENT_ID --repo manav-Mnv/aatce-apple-lab
-   ```
-4. Test it: **Actions → Deploy backend → Run workflow**. The last step prints `live=2.1.0 expected=2.1.0`.
+   (Set `portal_url` after Part 5 gives you the Vercel address.)
 
-`CLASPRC_JSON` is a sign-in token for that Google account: keep it only in GitHub secrets (never in
-the repo or chat). If it is ever exposed, revoke it at https://myaccount.google.com/permissions
-(remove "Google Apps Script clasp") and repeat step 1.
+Until these exist, emails wait in the queue (`email_sent = queued`) and go out once configured.
+Check results in `lab.sessions.email_sent` (`yes` / `failed`).
 
----
+## Part 4 — Firebase (Google sign-in for the portal)
 
-## Part 4 — GitHub (weekly retraining)
-1. GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**:
-   - `APPS_SCRIPT_URL` = web app URL
-   - `PIPELINE_SECRET` = secret #2
-2. **Actions → Retrain embeddings → Run workflow** to test. Expected log: photos downloaded, `Generated N embeddings`, `Published embeddings vX`. With no enrolled photos yet it fails at "Dataset loading failed" — that's normal until someone enrolls.
-3. It then runs every Sunday 03:00 IST by itself. Without the secrets it skips with a notice instead of failing.
-
-**Kiosk app builds:** **Actions → Kiosk release** builds `AATCE Kiosk.app` with the face model. It runs on every push to `master` that touches the app, or manually via **Run workflow** (only after this workflow file is on `master`). See [MAC_SETUP.md](MAC_SETUP.md).
-
----
-
-## Part 5 — Admin portal (Firebase + Vercel)
-
-### 5.1 Firebase (Google sign-in)
 1. https://console.firebase.google.com → **Add project** → `aatce-apple-lab` (Analytics not needed).
-2. **Build → Authentication → Get started → Sign-in method → Google → Enable** → choose a support email → Save.
-3. **Project settings (⚙) → General → Your apps → `</>` (Web)** → nickname `admin-portal` → Register (no Hosting). Copy `apiKey`, `authDomain`, `projectId`, `appId` from the config shown.
-4. After step 5.2 gives you a domain: **Authentication → Settings → Authorized domains → Add domain** → `your-project.vercel.app` (and any custom domain).
+2. **Build → Authentication → Get started → Sign-in method → Google → Enable** → Save.
+3. **Project settings (⚙) → General → Your apps → `</>` (Web)** → register `admin-portal` (no Hosting) → copy `apiKey`, `authDomain`, `projectId`, `appId`.
+4. After Part 5: **Authentication → Settings → Authorized domains → Add domain** → your `*.vercel.app` domain.
 
-These four values are *public identifiers*, not secrets; access is controlled by the server-side checks below.
+## Part 5 — Vercel (the admin portal and the activity form)
 
-### 5.2 Vercel (hosting)
-1. https://vercel.com → **Add New → Project** → import `manav-Mnv/aatce-apple-lab`.
-2. **Root Directory: `admin-portal`**; Framework: Next.js (auto).
-3. **Environment Variables**:
+1. https://vercel.com/new → import **manav-Mnv/aatce-apple-lab** → **Root Directory: `admin-portal`**.
+2. **Environment Variables**:
 
 | Name | Value |
 |---|---|
-| `APPS_SCRIPT_URL` | web app URL |
-| `ADMIN_SECRET` | secret #3 |
-| `NEXT_PUBLIC_FIREBASE_API_KEY` | from 5.1 |
-| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | from 5.1 |
-| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | from 5.1 |
-| `NEXT_PUBLIC_FIREBASE_APP_ID` | from 5.1 |
-| `NEXT_PUBLIC_ADMIN_EMAIL_DOMAIN` | e.g. `paruluniversity.ac.in` — everyone with a verified address there may sign in |
-| `ADMIN_EMAILS` | optional, comma-separated extra people, e.g. `mentor@gmail.com` |
+| `SUPABASE_URL` | `https://mlwbcifxunliyvxxfblo.supabase.co` |
+| `SUPABASE_PUBLISHABLE_KEY` | the publishable key |
+| `ADMIN_SECRET` | Vault → `aatce_admin_secret` |
+| `NEXT_PUBLIC_FIREBASE_API_KEY` / `_AUTH_DOMAIN` / `_PROJECT_ID` / `_APP_ID` | from Part 4 |
+| `NEXT_PUBLIC_ADMIN_EMAIL_DOMAIN` | e.g. `paruluniversity.ac.in` |
+| `ADMIN_EMAILS` | optional extra people, comma-separated |
 
-4. **Deploy**. Every PR gets a preview URL; merging to `master` updates production.
-5. Changing a `NEXT_PUBLIC_*` value needs a **Redeploy** (they are built into the page).
+3. **Deploy** → you get `https://<name>.vercel.app` — that is the **admin link** for faculty, and
+   `https://<name>.vercel.app/activity/<id>` is where activity emails point (set `portal_url` in Part 3).
+4. Changing a `NEXT_PUBLIC_*` value needs a **Redeploy**.
 
-Without the Firebase variables the deployed portal shows nothing and its API answers "Sign-in is not configured" — that's deliberate.
+Without the Firebase variables the deployed portal shows no data ("Sign-in is not configured") — on
+purpose. The `/activity/…` page works without sign-in.
+
+**Run it on your PC instead:** fill `ADMIN_SECRET` in `admin-portal/.env.local`, then
+`cd admin-portal; npm run dev` → http://localhost:3000 (sign-in skipped in development).
 
 ---
 
-## Part 6 — Day-to-day operations
+## Operations
 
-### Secret rotation (if a secret leaks, e.g. the kiosk Mac is stolen)
-1. Generate a new secret for **that role only**.
-2. Replace it in Script Properties (takes effect immediately, no redeploy).
-3. Update where it is used: kiosk Settings / GitHub secret / Vercel env (+ Redeploy).
+### Rotating a secret (e.g. the kiosk Mac is lost)
+1. SQL Editor — generates a new secret, activates it and stores it in Vault (change `kiosk` to `pipeline` or `admin` as needed):
+   ```sql
+   do $$
+   declare s text := encode(extensions.gen_random_bytes(32), 'hex');
+   begin
+     perform lab.set_secret('kiosk', s);
+     perform vault.update_secret((select id from vault.secrets where name = 'aatce_kiosk_secret'), s);
+   end $$;
+   ```
+2. Copy the new value from Vault to where that role is used (kiosk Settings / GitHub `PIPELINE_SECRET` / Vercel `ADMIN_SECRET` + Redeploy). The old one stops working immediately.
 
-### Removing a student's biometric data (on request)
-1. Drive → `Face-Dataset/<enrollment_no>` → delete the folder.
-2. AATCE sheet → `Face_Enrollments` → delete their row.
-3. Actions → **Retrain embeddings → Run workflow** (their template disappears from the next version).
-4. On the kiosk, after the retrain has published: quit the app, delete `~/Library/Application Support/AATCEKiosk/local-enrollments.json`, start it again. (That file only holds people enrolled on this kiosk; everyone included in the new published file is unaffected. Do it right after a retrain so nobody enrolled since then is lost.)
+### Deleting a student's biometric data (on request)
+```sql
+delete from lab.face_enrollments where enrollment_no = '<number>';   -- also deletes their photos
+```
+Then **Actions → Retrain embeddings → Run workflow**. On the kiosk, after that retrain: quit the app,
+delete `~/Library/Application Support/AATCEKiosk/local-enrollments.json`, start it again.
 
 ### Health checks
-- Kiosk status pill: **Online · N faces**. Orange = needs attention (hover for the message).
-- Apps Script editor → **Executions**: every request and error.
-- Sheet `Attendance_Log` → `email_sent = failed` usually means the daily mail quota was hit.
+- Kiosk status pill **Online · N faces**; orange = needs attention (hover for the message).
+- Supabase → **Logs** (API, Postgres), **Integrations → Cron** (job runs), **Advisors** (security).
+- Run `supabase/tests/api_test.sql` in the SQL editor any time → `TESTS PASSED: 70` (it changes nothing).
 
-### Local development
-`node backend/dev/server.js` gives a full backend on `http://localhost:8787/exec` with fake data;
-point the portal (`admin-portal/.env.local`) or a dev kiosk (Settings) at it.
+### Database changes
+Add a new file in `supabase/migrations/`, run it in the SQL editor (or `supabase db push`), run the
+tests. CI runs the same tests on a fresh Postgres for every push.

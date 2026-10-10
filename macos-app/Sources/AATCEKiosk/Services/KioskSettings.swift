@@ -12,7 +12,8 @@ enum KioskPaths {
 
 /// Non-secret settings live in UserDefaults; the kiosk secret lives in the Keychain (NFR-8).
 struct KioskSettings: Equatable {
-    var backendURL: String
+    var projectURL: String
+    var publishableKey: String
     var workshopName: String
     var matchThreshold: Double
 
@@ -20,29 +21,33 @@ struct KioskSettings: Equatable {
 
     static func load() -> KioskSettings {
         KioskSettings(
-            backendURL: store.string(forKey: "backendURL") ?? "",
+            projectURL: store.string(forKey: "projectURL") ?? "",
+            publishableKey: store.string(forKey: "publishableKey") ?? "",
             workshopName: store.string(forKey: "workshopName") ?? "",
             matchThreshold: store.object(forKey: "matchThreshold") as? Double ?? Double(FaceMatcher.defaultThreshold)
         )
     }
 
     func save() {
-        Self.store.set(backendURL.trimmingCharacters(in: .whitespaces), forKey: "backendURL")
+        Self.store.set(projectURL.trimmingCharacters(in: .whitespaces), forKey: "projectURL")
+        Self.store.set(publishableKey.trimmingCharacters(in: .whitespaces), forKey: "publishableKey")
         Self.store.set(workshopName.trimmingCharacters(in: .whitespaces), forKey: "workshopName")
         Self.store.set(matchThreshold, forKey: "matchThreshold")
     }
 
-    /// HTTPS only, except a localhost dev server (backend/dev/server.js).
+    /// HTTPS only (http allowed for a localhost Supabase during development).
     var backendConfiguration: BackendConfiguration? {
-        guard let url = URL(string: backendURL.trimmingCharacters(in: .whitespaces)),
+        let key = publishableKey.trimmingCharacters(in: .whitespaces)
+        guard let url = URL(string: projectURL.trimmingCharacters(in: .whitespaces)),
               url.scheme == "https" || (url.scheme == "http" && url.host == "localhost"),
+              !key.isEmpty,
               let secret = SecretStore.read(), !secret.isEmpty else { return nil }
-        return BackendConfiguration(baseURL: url, secret: secret)
+        return BackendConfiguration(projectURL: url, publishableKey: key, secret: secret)
     }
 }
 
 /// First names seen in scan replies, so the kiosk can greet a recognised student
-/// instantly while the backend (2–3 s) records the scan.
+/// instantly while the backend records the scan.
 enum KnownNames {
     private static let key = "knownFirstNames"
 

@@ -10,16 +10,32 @@ permissions:
   contents: read
 
 jobs:
-  backend:
-    name: Backend (Apps Script)
+  database:
+    name: Database API (Supabase SQL)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: [ '5432:5432' ]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - run: node tests/test_backend.js
-        working-directory: backend
+      - name: Apply migrations and run tests
+        run: |
+          psql -v ON_ERROR_STOP=1 -q -f supabase/tests/ci_setup.sql
+          psql -v ON_ERROR_STOP=1 -q -f supabase/migrations/20261010130000_core.sql
+          psql -v ON_ERROR_STOP=1 -q -f supabase/migrations/20261010143000_harden.sql
+          # The test block always ends with an exception (to roll back); success is its message.
+          out=$(psql -q -f supabase/tests/api_test.sql 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -q "TESTS PASSED"
 
   ml-training:
     name: ML pipeline

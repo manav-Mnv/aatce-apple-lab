@@ -4,8 +4,8 @@ publish.py — Upload a generated embeddings.json through the backend.
     python -m src.publish --input ./output/embeddings.json
 
 Assigns version = (current published version + 1), validates, and sends it with
-`publish_embeddings`. The backend stores it privately in Drive; kiosks fetch it
-with `embeddings_download`. Nothing is committed to git or shared by link.
+`publish_embeddings`. The backend stores it in its private schema; kiosks fetch
+it with `embeddings_download`. Nothing is committed to git or shared by link.
 """
 
 import argparse
