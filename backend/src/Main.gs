@@ -9,7 +9,7 @@
  * sent by email; no API action is reachable over GET.
  */
 
-var API_VERSION = '2.0.0';
+var API_VERSION = '2.1.0';
 
 function doPost(e) {
   var body;

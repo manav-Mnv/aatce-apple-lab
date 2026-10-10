@@ -1,6 +1,6 @@
 # API Contract — AATCE backend (Apps Script web app)
 
-> **Version 2.0.0** · Base URL `https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec`
+> **Version 2.1.0** · Base URL `https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec`
 > Every call: **HTTP POST**, `Content-Type: application/json`, body `{ "secret": "...", "action": "...", ...params }`.
 
 ## Transport rules
@@ -43,7 +43,7 @@ The secret decides the role. Each role may only call its own actions; others ret
 ## Any role
 
 ### `status`
-→ `{ "success": true, "status": "online", "timestamp": "...", "version": "2.0.0" }`
+→ `{ "success": true, "status": "online", "timestamp": "...", "version": "2.1.0" }`
 
 ### `embeddings_version`
 → `{ "success": true, "version": 3, "generated_at": "2026-10-05T03:00:00+00:00", "model_version": "facenet-inceptionresnetv1-vggface2", "entry_count": 152 }`

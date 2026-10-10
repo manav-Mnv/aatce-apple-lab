@@ -79,7 +79,7 @@ test('auth: each role can call status', () => {
   ['kiosk', 'pipeline', 'admin'].forEach((role) => {
     const res = env[role]('status');
     assert.strictEqual(res.success, true);
-    assert.strictEqual(res.version, '2.0.0');
+    assert.strictEqual(res.version, '2.1.0');
   });
 });
 
