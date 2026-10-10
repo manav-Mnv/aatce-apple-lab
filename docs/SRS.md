@@ -1,158 +1,120 @@
-# Software Requirements Specification (SRS) — v2.0 (Production)
+# Software Requirements Specification (SRS) — v2.1
 ## AATCE — Apple Lab Attendance System
-**Swift Coding Club, Parul University**
-**Repo:** https://github.com/manav-Mnv/aatce-apple-lab
+**Swift Coding Club, Parul University** · **Repo:** https://github.com/manav-Mnv/aatce-apple-lab
 
-*Supersedes v1.0 — reflects the final $0-hosting-cost architecture.*
+*v2.1 (2026-10-10) supersedes v2.0: adds per-role secrets, private biometric storage, a dedicated
+enrollment/consent tab, the hardening requirements carried over from the PRD, and the
+implementation decisions. Technical detail: [ARCHITECTURE.md](ARCHITECTURE.md).*
 
 ---
 
 ## 1. Introduction
-
 ### 1.1 Purpose
-Full production specification for a face-recognition attendance system for the Apple Lab: architecture, requirements, data schema, security, deployment, and a phased build roadmap.
-
+Production specification for a face-recognition attendance system for the Apple Lab.
 ### 1.2 Scope
-Covers: kiosk-based scan/enrollment, session logging, activity-form emails, batch attendance, an admin portal, and a retrainable face dataset — running entirely on free-tier infrastructure.
+Kiosk scan/enrollment, session logging, activity-form emails, batch attendance, admin portal, and a retrainable face dataset — entirely on free-tier infrastructure.
+**Out of scope for v1:** multiple labs, iris/retina hardware, instant model retraining.
+### 1.3 Key principle
+**The enrollment number is the permanent key.** A face is never stored on its own.
 
-**Out of scope for v1:** multi-lab support, true iris/retina hardware scanning, live/instant model retraining.
-
-### 1.3 Key Principle
-**Enrollment number is the permanent key for everything.** A face is never stored as new data on its own — always linked to an enrollment number, existing (SCC roster) or newly created (non-SCC workshop attendee).
-
----
-
-## 2. Final Architecture
-
+## 2. Architecture
 ```
- Swift Kiosk App (Apple Lab iMac)
-   - matches faces locally/on-device against a cached embedding set
-   - calls Apps Script over HTTPS (POST) with a shared secret in the JSON body
-        |
-        v
- Google Apps Script Web App (doGet / doPost)
-   - sends activity-form emails via MailApp
-   - reads/writes directly to Google Sheets
-        |
-        v
- Google Sheets (single source of truth)
-   - Master_Students (existing SCC registration sheet)
-   - Attendance_Log / Other_Workshop_Attendees (AATCE Apple Lab sheet)
-        ^
-        |
- Google Drive: Face-Dataset (per-enrollment subfolders, raw images)
-        |
-        v
- Python retraining pipeline (scheduled via GitHub Actions)
-   - generates new embeddings, pushes them back for kiosk apps to re-sync
-
- Admin Portal (Next.js, hosted on Vercel)
-   - Google sign-in via Firebase Authentication
-   - reads/writes by calling the same Apps Script Web App
+ Kiosk app (SwiftUI, lab iMac)
+   Vision detection → FaceNet (Core ML) → on-device matching → liveness
+   POST + KIOSK_SECRET
+        │
+        ▼
+ Google Apps Script web app ──► Google Sheets: Master_Students (read-only roster),
+   per-role auth, script lock       Attendance_Log, Other_Workshop_Attendees,
+   MailApp activity form            Face_Enrollments, Embeddings (metadata)
+        ▲          ▲            ──► Google Drive (private): Face-Dataset/<enrollment_no>/, Embeddings/
+        │          │
+        │   GitHub Actions weekly: sync photos → FaceNet embeddings → publish (PIPELINE_SECRET)
+        │
+ Admin portal (Next.js on Vercel) — Firebase Google sign-in; server calls the backend with ADMIN_SECRET
 ```
 
----
-
-## 3. Final Tech Stack
-
+## 3. Tech stack
 | Layer | Choice | Cost |
 |---|---|---|
-| Kiosk app | Swift + SwiftUI, Vision (detection + liveness), CoreML (embeddings + on-device matching) | Free (Xcode) |
-| Server-side glue | Google Apps Script Web App | Free |
-| Data store | Google Sheets (no separate DB) | Free |
-| Raw face images | Google Drive folder | Free (within quota) |
-| Email | Apps Script `MailApp` | Free |
-| Model training | Python, scheduled via GitHub Actions | Free (2,000 min/month) |
-| Admin portal | Next.js + Tailwind | Free |
-| Admin portal hosting | Vercel | Free |
-| Admin portal auth | Firebase Authentication (Google sign-in) | Free |
-| Version control / CI | GitHub | Free |
+| Kiosk | Swift + SwiftUI (macOS 13+), AVFoundation, Vision, Core ML | Free |
+| Server | Google Apps Script web app | Free |
+| Data | Google Sheets; files in Google Drive | Free |
+| Email | MailApp + HtmlService form | Free |
+| Model | FaceNet InceptionResnetV1 (VGGFace2), PyTorch, exported to Core ML | Free |
+| Pipeline | Python 3.11 on GitHub Actions (weekly) | Free |
+| Portal | Next.js + Tailwind on Vercel; Firebase Authentication | Free |
 
-**Why matching moved on-device:** Apps Script can't run CoreML inference. At this scale (a few hundred students), comparing one embedding against all cached embeddings is trivial math — the kiosk app does it locally after pulling the current embedding set from Apps Script periodically. This also means matching still works through brief network drops.
+Matching is on-device: Apps Script cannot run Core ML, and comparing one embedding against a few hundred is trivial on the Mac and keeps working during network drops.
 
----
+## 4. Functional requirements
+### 4.1 Enrollment (self-serve kiosk flow)
+- **FR-1** Enter enrollment number.
+- **FR-2** Look it up in `Master_Students`; show the name and a masked email to confirm. Non-members enter name and email.
+- **FR-3** Capture 5 face crops (3 frontal, 2 with the head turned — doubles as liveness).
+- **FR-4** Upload the crops to `Face-Dataset/<enrollment_no>/`; store the averaged embedding locally so the student is recognised immediately.
+- **FR-5** Re-enrollment adds photos, never overwrites.
+- **FR-6** Fully self-serve.
+- **FR-6a** Biometric consent is required and recorded (`Face_Enrollments.consent_at`). `Master_Students` is never written.
 
-## 4. Functional Requirements
+### 4.2 Routine scan
+- **FR-7** Face → 3-frame probe → cosine match against cached templates (threshold 0.65, plus a 0.05 lead over the runner-up) → head-turn liveness.
+- **FR-8** No match → manual enrollment-number entry, marked `manual` for audit.
+- **FR-9/10** No open session today → entry (UUID `session_id`); open session → exit with `duration_mins`.
+- **FR-11** 2-minute cooldown between scans.
+- **FR-12** Enrolled non-members → `Other_Workshop_Attendees`, once per day.
+- **FR-13** Every API call is a POST with a role secret in the JSON body; GET only serves the activity form.
 
-### 4.1 Enrollment (self-serve, one combined kiosk flow)
-- FR-1 Enter enrollment number → FR-2 lookup in `Master_Students`, confirm or manually enter Name/Email → FR-3 capture 3–5 face frames immediately, gated by liveness check → FR-4 frames sync to `/Face-Dataset/<enrollment_no>/`, embedding cached locally and pushed to the Sheet's embedding store → FR-5 re-enrollment appends, never overwrites → FR-6 fully self-serve, no staff gate.
-
-### 4.2 Routine scan (entry/exit)
-- FR-7 Face detected → liveness check → matched locally against the cached embedding set (cosine similarity, threshold 0.65 default).
-- FR-8 Below threshold → manual enrollment-number fallback.
-- FR-9/10 No open session today → entry (new `session_id` UUID, `entry_time`); open session exists → exit (`exit_time`, `duration`).
-- FR-11 2–3 minute cooldown after any scan.
-- FR-12 Enrollment number not in `Master_Students` → logged to `Other_Workshop_Attendees`, not `Attendance_Log`.
-- FR-13 Every call to Apps Script is a POST request containing a shared secret in the JSON body; requests without it or via GET are rejected.
-
-### 4.3 Activity form & email
-- FR-14 On exit / 1-hour threshold, Apps Script sends the activity-form email via `MailApp`.
-- FR-15 Form response written back to the matching row in `Attendance_Log` by `session_id`.
+### 4.3 Activity form and email
+- **FR-14** On exit after ≥ 15 minutes, email the activity-form link. Sessions never exited are closed nightly and still emailed.
+- **FR-15** The answer is written to the same `Attendance_Log` row by `session_id`.
 
 ### 4.4 Batch tagging
-- FR-16 `Batch` column on `Master_Students` (comma-separated for multi-batch students).
-- FR-17 Batch attendance = filtered `QUERY` on `Attendance_Log` x `Master_Students`, no separate roster table.
+- **FR-16** `batch_tags` on `Master_Students` (comma-separated).
+- **FR-17** Batch attendance is computed from `Attendance_Log` × `Master_Students` (portal), no separate roster.
 
 ### 4.5 Admin portal
-- FR-18 Google sign-in via Firebase Auth (staff only — restrict by university email domain if possible).
-- FR-19 Live occupancy, full session log (filterable), activity form responses, CSV export, basic analytics (peak hours, avg. session length, per-batch attendance).
-- FR-20 Portal reads data by calling the same Apps Script Web App as a read-only API, not by touching Sheets directly.
+- **FR-18** Google sign-in via Firebase, restricted to the university domain and/or an allow list, verified server-side.
+- **FR-19** Live occupancy, filterable session log, activity answers, roster with enrollment status, CSV export, analytics (peak hours, average session, per-batch attendance, daily trend).
+- **FR-20** The portal reads only through the backend's admin actions.
 
----
-
-## 5. Non-Functional / Production Requirements
-
+## 5. Non-functional requirements
 | ID | Requirement |
 |---|---|
-| NFR-1 | Scan-to-result under 2s for on-device matching; Apps Script sync calls may take 1-3s (cold start) — acceptable since they're outside the critical scan path |
-| NFR-2 | Kiosk queues scans locally if Apps Script is unreachable, syncs on reconnect — no data loss |
-| NFR-3 | Biometric consent recorded at enrollment; `/Face-Dataset/` access restricted to maintainers |
-| NFR-4 | Every Apps Script endpoint checks a shared secret sent in the JSON body (stored in Apps Script "Script Properties," never hardcoded); admin portal auth via Firebase, restricted to university domain |
-| NFR-5 | Matching lives on-device — kiosk app updates independently of any backend deploy |
-| NFR-6 | Architecture supports a future `lab_id` field for multi-lab, without schema rework |
-| NFR-7 | Apps Script and Google API quotas are generous for one lab's volume, but code should batch Sheet reads/writes (not per-row) to stay well under limits |
-| NFR-8 | All secrets (shared secret, Firebase config) live in environment variables / Script Properties — never committed to the repo |
+| NFR-1 | On-device recognition well under 2 s; backend calls 1–3 s, off the matching path |
+| NFR-2 | Scans made offline are queued durably on the kiosk with their real time and replayed in order |
+| NFR-3 | Consent recorded; photos and embeddings stay in private Drive and move only through authenticated calls; nothing biometric in the repo, CI caches or artifacts |
+| NFR-4 | Per-role secrets (kiosk / pipeline / admin) in Script Properties with per-role action lists; portal tokens verified server-side |
+| NFR-5 | Matching lives on-device; the kiosk updates independently of backend deploys |
+| NFR-6 | Schema can take a future `lab_id` without rework |
+| NFR-7 | Sheets read in one batch per request; writes under `LockService` from read to write |
+| NFR-8 | Secrets only in Script Properties, GitHub secrets, Vercel env, macOS Keychain |
+| NFR-9 | Kiosk and pipeline use the same model and the same 160×160 crop; the Core ML export is checked against PyTorch |
+| NFR-10 | User-typed text cannot become a spreadsheet formula |
 
----
+## 6. Data model
+**Master_Students** (existing SCC sheet, read-only): `enrollment_no, name, email, batch_tags` (+ any other columns, ignored).
+**Attendance_Log**: `session_id, enrollment_no, entry_time, exit_time, duration_mins, activity_form_status, activity_description, email_sent, notes`.
+**Other_Workshop_Attendees**: `id, name, enrollment_no, email, workshop_name, date`.
+**Face_Enrollments**: `enrollment_no, name, email, is_member, consent_at, photo_count, enrolled_at, updated_at`.
+**Embeddings**: `version, generated_at, model_version, drive_file_id, entry_count` (one row); the file `embeddings-v<N>.json` = `{version, generated_at, model_version, entries[{enrollment_no, embedding_vector[512]}]}` in private Drive.
 
-## 6. Data Model (Sheet Schema)
+## 7. Deployment and environments
+- **Apps Script:** dev deployment on copies of the sheets, prod deployment on live data. Update with *Manage deployments → New version* to keep the URL. Step-by-step: [SETUP.md](SETUP.md).
+- **Vercel:** preview per PR, production on merge.
+- **Firebase:** one project, Google provider, authorized Vercel domain.
+- **GitHub Actions:** CI on every push; weekly retrain; kiosk release (model export + app bundle).
+- **Kiosk:** `AATCE Kiosk.app` from the CI artifact, ad-hoc signed ([MAC_SETUP.md](MAC_SETUP.md)).
 
-**Master_Students** (existing sheet, new tab)
-`enrollment_no, name, email, batch_tags, face_dataset_path, registered_at`
+## 8. Phased roadmap — status
+1. **Core loop** — done (backend, kiosk, matching, liveness).
+2. **Activity form + email** — done.
+3. **Admin portal** — done (needs Firebase + Vercel configuration).
+4. **ML pipeline** — done (needs GitHub secrets).
+5. **Hardening** — offline queue, batch analytics, CSV, secret rotation runbook done; bulk-capture session for the ~150-student backlog and threshold tuning remain (need real use).
 
-**Attendance_Log** (AATCE Apple Lab sheet)
-`session_id, enrollment_no, entry_time, exit_time, duration_mins, activity_form_status, activity_description, email_sent, notes`
-
-**Other_Workshop_Attendees**
-`id, name, enrollment_no, email, workshop_name, date`
-
-**Embeddings store** (new tab or a lightweight JSON file in Drive, synced to kiosk apps)
-`enrollment_no, embedding_vector, model_version, generated_at`
-
----
-
-## 7. Deployment & Environments
-
-- **Apps Script:** maintain two deployments — a "dev" deployment (testing, points at a copy of the Sheets) and a "prod" deployment (live data). Never test against the real `Attendance_Log`.
-- **Vercel:** GitHub integration gives automatic preview deployments per PR, and a production deployment on merge to `main` — use this as a review step before anything goes live.
-- **Firebase:** one project, Authentication enabled with Google provider, domain-restricted if possible.
-- **GitHub Actions:** scheduled workflow (e.g. weekly) runs the Python retraining pipeline; secrets (Drive/Sheets service account credentials) stored as GitHub encrypted secrets, never in the repo.
-- **Kiosk app distribution:** Xcode build to .dmg via `create-dmg` — ideally notarized with an Apple Developer account for a smooth install on the lab iMac.
-
----
-
-## 8. Phased Build Roadmap
-
-1. **Phase 1 - Core loop:** Apps Script `doPost`/`doGet` (enroll + scan endpoints) reading/writing `Attendance_Log` and `Master_Students`, shared-secret auth. Kiosk app: camera, Vision detection, liveness check, local embedding matching, calls to Apps Script. Get one full entry-to-exit cycle working end to end.
-2. **Phase 2 - Activity form + email:** Apps Script `MailApp` trigger on exit/1-hour mark, response write-back.
-3. **Phase 3 - Admin portal:** Next.js app, Firebase Auth login, calls Apps Script as a read API, deployed on Vercel.
-4. **Phase 4 - ML pipeline:** Python embedding generation + retraining script, GitHub Actions schedule, model version sync back to kiosk apps.
-5. **Phase 5 - Hardening:** batch tagging/filtering, CSV export, analytics, offline queueing on the kiosk, bulk-capture session for the ~150-student backlog.
-
----
-
-## 9. Open Items
-- Exact `Master_Students` formula/columns against the real sheet layout.
-- Bulk-capture session logistics for the existing backlog.
-- Confidence-threshold tuning once real match data exists.
-- Firebase domain-restriction setup (confirm university email enforcement is configured).
+## 9. Open items
+- Confirm the real `Master_Students` headers (map them in `MASTER_COLUMNS`).
+- Bulk-capture logistics; threshold tuning with real data.
+- Mail quota: 100/day on a personal Gmail; use a Workspace account if the lab exceeds it.
+- Liveness is a head-turn check; a video replay could pass (no depth camera).

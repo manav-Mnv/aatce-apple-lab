@@ -43,9 +43,10 @@ Date: 2026-10-10. Companion to `docs/AUDIT_REPORT.md`.
 - `Attendance_Log` is read in full on every scan; archive it yearly beyond ~30k rows.
 - `npm audit` flags Firestore's gRPC inside `firebase`; the portal only uses Auth.
 - Two roles must not share the same secret.
-- Not yet done: docs refresh (README, API_CONTRACT v2, SRS v2.1), SETUP guide, Drive folder, third review pass, PR to `master`.
+- Docs refreshed (README, ARCHITECTURE, SETUP, MAC_SETUP, API_CONTRACT v2.0.0, SRS v2.1); unused orchestration skeleton and empty logs removed.
+- Still open: create the real Google resources and secrets (SETUP.md), merge `feature/full-build` into `master`, first real-device test of the kiosk.
 
-## What you need to provide (deferred, as you asked)
+## What you need to provide — step by step in [SETUP.md](SETUP.md)
 Script Properties: `KIOSK_SECRET`, `PIPELINE_SECRET`, `ADMIN_SECRET` (each `openssl rand -hex 32`), `MASTER_SHEET_ID`, `ATTENDANCE_SHEET_ID`, `FACE_DATASET_FOLDER_ID`, `EMBEDDINGS_FOLDER_ID`, `WEB_APP_URL`. Then run `setupSheets()` and `installTriggers()` in the editor.
 GitHub secrets: `APPS_SCRIPT_URL`, `PIPELINE_SECRET`.
 Vercel env: `APPS_SCRIPT_URL`, `ADMIN_SECRET`, `NEXT_PUBLIC_FIREBASE_*` (4), `NEXT_PUBLIC_ADMIN_EMAIL_DOMAIN` and/or `ADMIN_EMAILS`.
