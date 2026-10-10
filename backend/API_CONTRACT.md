@@ -16,7 +16,7 @@ The secret decides the role. Each role may only call its own actions; others ret
 |---|---|---|
 | kiosk | `KIOSK_SECRET` | `status`, `lookup`, `enroll`, `upload_faces`, `scan`, `embeddings_version`, `embeddings_download` |
 | pipeline | `PIPELINE_SECRET` | `status`, `embeddings_version`, `face_manifest`, `face_images`, `publish_embeddings` |
-| admin | `ADMIN_SECRET` | `status`, `embeddings_version`, `occupancy`, `attendance_log`, `students`, `workshop_attendees` |
+| admin | `ADMIN_SECRET` | `status`, `embeddings_version`, `dashboard`, `occupancy`, `attendance_log`, `students`, `workshop_attendees` |
 
 ## Errors
 ```json
@@ -94,6 +94,10 @@ Validated: `version` integer > current, `generated_at` and `model_version` non-e
 Errors: `validation_error`, `version_conflict`.
 
 ## Admin
+
+### `dashboard`
+Everything the portal shows in **one** call (each Apps Script call costs ~1.5 s of startup):
+→ `{ "success": true, "occupancy": [...], "entries": [...], "students": [...], "workshops": [...] }` — the same arrays as the four actions below.
 
 ### `occupancy`
 Today's sessions without an exit.

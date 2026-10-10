@@ -41,6 +41,23 @@ struct KioskSettings: Equatable {
     }
 }
 
+/// First names seen in scan replies, so the kiosk can greet a recognised student
+/// instantly while the backend (2–3 s) records the scan.
+enum KnownNames {
+    private static let key = "knownFirstNames"
+
+    static func firstName(for enrollmentNo: String) -> String? {
+        (UserDefaults.standard.dictionary(forKey: key) as? [String: String])?[enrollmentNo]
+    }
+
+    static func remember(fullName: String, for enrollmentNo: String) {
+        guard let first = fullName.split(separator: " ").first.map(String.init), !first.isEmpty else { return }
+        var names = UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:]
+        names[enrollmentNo] = first
+        UserDefaults.standard.set(names, forKey: key)
+    }
+}
+
 enum SecretStore {
     private static let query: [String: Any] = [
         kSecClass as String: kSecClassGenericPassword,

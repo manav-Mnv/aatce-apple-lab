@@ -45,7 +45,7 @@ Everything here describes the code on `feature/full-build` (backend API v2.0.0).
 1. Kiosk camera frame (10 analysed/s) → Vision finds the face and its yaw.
 2. Three consecutive frames are cropped (§5.2) and embedded with Core ML; their mean is the **probe**.
 3. Probe is matched against all templates on the kiosk (§5.4). No match → "We don't recognize you yet".
-4. Match → **liveness**: "Turn your head slightly" (§5.5).
+4. Match → **liveness**: "Turn your head slightly" (§5.5). The moment it passes, the kiosk shows a green ✓ "Hi, Alice" (first names are remembered from earlier scans) — no waiting for the backend.
 5. Kiosk `POST scan {enrollment_no, method:"face"}` → backend decides entry or exit (§5.7) → kiosk shows "Welcome, Alice" / "See you, Alice · 1 h 40 min".
 6. On exit (≥ 15 min) the backend emails the activity form link.
 7. Offline? The scan goes to the durable queue with its real time and is replayed later (§5.8).
@@ -64,9 +64,10 @@ temp folder and deleted at the end; nothing is cached, committed or uploaded as 
 
 ### 3.4 Admin portal
 Browser signs in with Google (Firebase) → calls the portal's own `/api/data` with the Firebase ID
-token → the Next.js server verifies the token, checks the email domain/allow list, then calls the
-backend with the **admin secret** (`occupancy`, `attendance_log`, `students`, `workshop_attendees`)
-→ the browser computes stats and charts. The admin secret never reaches the browser.
+token → the Next.js server verifies the token, checks the email domain/allow list, then makes **one**
+`dashboard` call to the backend with the **admin secret** → the browser computes stats and charts.
+The admin secret never reaches the browser. The last response is kept in `sessionStorage`, so a
+reload shows data instantly while fresh data loads (cleared when the tab closes and on sign-out).
 
 ---
 
@@ -169,7 +170,7 @@ dropped. A guard prevents two overlapping flushes from sending the same scan twi
 ## 6. Performance and limits
 | Item | Limit |
 |---|---|
-| Scan round trip | Apps Script 1–3 s (cold start); matching itself is milliseconds |
+| Scan round trip | Apps Script ~1.5 s fixed startup + 0.5–2 s work, measured on the live deployment; matching itself is milliseconds and the student sees ✓ immediately |
 | `Attendance_Log` size | read in full per scan; fine to ~30 000 rows, archive yearly after that |
 | Emails | MailApp: 100/day on a personal Gmail, 1 500/day on Google Workspace |
 | Upload | ≤ 5 images × 200 KB per call; `face_images` ≤ 25 per call |

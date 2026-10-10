@@ -39,7 +39,7 @@ var MASTER_COLUMNS = {
 var ROLE_ACTIONS = {
   kiosk: ['status', 'lookup', 'enroll', 'upload_faces', 'scan', 'embeddings_version', 'embeddings_download'],
   pipeline: ['status', 'embeddings_version', 'face_manifest', 'face_images', 'publish_embeddings'],
-  admin: ['status', 'embeddings_version', 'occupancy', 'attendance_log', 'students', 'workshop_attendees']
+  admin: ['status', 'embeddings_version', 'dashboard', 'occupancy', 'attendance_log', 'students', 'workshop_attendees']
 };
 
 /** Script Property that holds each role's secret. */

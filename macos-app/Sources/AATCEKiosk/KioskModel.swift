@@ -19,6 +19,8 @@ final class KioskModel: ObservableObject {
         case idle(FaceHint)
         case identifying
         case liveness(progress: Double)
+        /// Recognised and live: shown instantly while the backend records the scan.
+        case recognized(firstName: String?)
         case submitting
         case result(ScanResult)
         case unrecognized
@@ -203,7 +205,8 @@ final class KioskModel: ObservableObject {
         let progress = min(1, abs(sample.yaw - baseline) / Self.livenessYaw)
         phase = .liveness(progress: progress)
         if progress >= 1 {
-            phase = .submitting  // before the Task, so the next frame can't submit again
+            // Set before the Task, so the next frame can't submit again.
+            phase = .recognized(firstName: KnownNames.firstName(for: match.enrollmentNo))
             Task { await submit(enrollmentNo: match.enrollmentNo, manual: false) }
         }
     }
@@ -217,7 +220,7 @@ final class KioskModel: ObservableObject {
     }
 
     private func submit(enrollmentNo: String, manual: Bool) async {
-        phase = .submitting
+        if case .recognized = phase {} else { phase = .submitting }
         let scan = QueuedScan(enrollmentNo: enrollmentNo, scannedAt: Date(), manual: manual)
         recentScans[enrollmentNo] = scan.scannedAt
 
@@ -271,6 +274,7 @@ final class KioskModel: ObservableObject {
     }
 
     private func result(for response: ScanResponse) -> ScanResult {
+        KnownNames.remember(fullName: response.name, for: response.enrollmentNo)
         let name = response.name.split(separator: " ").first.map(String.init) ?? ""
         let time = Date().formatted(date: .omitted, time: .shortened)
         switch response.action {

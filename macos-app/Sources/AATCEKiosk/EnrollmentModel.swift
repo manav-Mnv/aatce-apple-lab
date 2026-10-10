@@ -149,6 +149,7 @@ final class EnrollmentModel: ObservableObject {
             let jpegs = try crops.map(Self.jpeg)
             _ = try await client.uploadFaces(enrollmentNo: trimmedNumber, jpegImages: jpegs)
             try store.addLocal(LocalEnrollment(enrollmentNo: trimmedNumber, vector: template, createdAt: Date()))
+            KnownNames.remember(fullName: confirmedName, for: trimmedNumber)
             step = .done(name: confirmedName)
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             if case .done = step { onFinish() }

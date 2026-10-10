@@ -65,6 +65,7 @@ function handlerFor_(action) {
     case 'face_manifest': return handleFaceManifest_;
     case 'face_images': return handleFaceImages_;
     case 'publish_embeddings': return handlePublishEmbeddings_;
+    case 'dashboard': return handleDashboard_;
     case 'occupancy': return handleOccupancy_;
     case 'attendance_log': return handleAttendanceLog_;
     case 'students': return handleStudents_;

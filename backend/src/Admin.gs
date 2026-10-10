@@ -3,6 +3,20 @@
  * Only the admin secret can call these (ROLE_ACTIONS in Config.gs).
  */
 
+/**
+ * Everything the portal shows, in one call. Each Apps Script request costs
+ * ~1.5 s before any work starts, so one round trip instead of four.
+ */
+function handleDashboard_() {
+  return {
+    success: true,
+    occupancy: handleOccupancy_().people,
+    entries: handleAttendanceLog_({}).entries,
+    students: handleStudents_({}).students,
+    workshops: handleWorkshopAttendees_().attendees
+  };
+}
+
 /** Who is in the lab right now: today's sessions with no exit. */
 function handleOccupancy_() {
   var master = masterTable_();

@@ -525,6 +525,18 @@ test('admin: students joins enrollment status and filters by batch', () => {
   assert.strictEqual(env.admin('students', { batch: 'SCC/5' }).count, 0);
 });
 
+test('admin: dashboard returns everything in one call', () => {
+  const env = setup();
+  env.kiosk('scan', { enrollment_no: '2021001' });
+  const res = env.admin('dashboard');
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(res.occupancy.length, 1);
+  assert.strictEqual(res.entries.length, 1);
+  assert.strictEqual(res.students.length, 2);
+  assert.deepStrictEqual(res.workshops, []);
+  assert.strictEqual(env.kiosk('dashboard').error_code, 'forbidden');
+});
+
 test('admin: workshop_attendees', () => {
   const env = setup();
   env.kiosk('enroll', { enrollment_no: 'W1', consent: true, name: 'Guest', email: 'g@x.io' });
