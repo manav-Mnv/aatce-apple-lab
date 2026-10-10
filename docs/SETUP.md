@@ -98,7 +98,7 @@ Editor → **Project Settings** → **Script Properties** → **Add script prope
 
 ### 3.4 Deploy as a web app
 1. **Deploy → New deployment** → ⚙ **Select type → Web app**.
-2. Description `v2.0.0`; **Execute as: Me**; **Who has access: Anyone** (the manifest says `ANYONE_ANONYMOUS`; the kiosk and GitHub Actions have no Google login — the secrets protect the API).
+2. Description `v2.1.0`; **Execute as: Me**; **Who has access: Anyone** (the manifest says `ANYONE_ANONYMOUS`; the kiosk and GitHub Actions have no Google login — the secrets protect the API).
 3. **Deploy** → **Authorize access** → pick the club account → *Advanced → Go to AATCE Backend (unsafe)* → **Allow**. (Google shows this for every unverified personal script; the permissions are Sheets, Drive, send mail, triggers, your email address.)
 4. Copy the **Web app URL** (ends in `/exec`).
 
@@ -114,13 +114,48 @@ In the editor, choose function **`setupSheets`** in the toolbar → **Run**. Che
 ```bash
 curl -L -H "Content-Type: application/json" -d '{"secret":"<KIOSK_SECRET>","action":"status"}' "<WEB_APP_URL>"
 ```
-Expected: `{"success":true,"status":"online",...,"version":"2.0.0"}`.
+Expected: `{"success":true,"status":"online",...,"version":"2.1.0"}`.
 Use `-L` and **do not** add `-X POST` (Apps Script answers with a redirect that must be followed with GET).
 More checks: `"action":"lookup","enrollment_no":"<a real number>"` with the kiosk secret returns the student's name; `"action":"students"` with the kiosk secret must return `forbidden`.
 
-### 3.8 Updating the backend later
-Push/paste the new code, then **Deploy → Manage deployments → ✏ Edit → Version: New version → Deploy**.
+### 3.8 Updating the backend later (by hand)
+Only needed if you skip 3.9. Push/paste the new code, then **Deploy → Manage deployments → ✏ Edit → Version: New version → Deploy**.
 This keeps the **same URL**. ("New deployment" would create a new URL you'd have to update everywhere.)
+Saving alone is not enough: until you publish a new version, the live URL keeps running the old code.
+
+### 3.9 Automatic deploys (recommended — do this once)
+After this, every change to `backend/src/` merged to `master` is tested, pushed to Apps Script and
+published as a new version of the **same** URL by the **Deploy backend** workflow, which then checks
+that the live backend really runs the new version. No more copy-paste.
+
+1. On your PC, sign in to clasp **with the Google account that owns the script** (opens a browser):
+   ```bash
+   npx @google/clasp@3.4.1 login
+   ```
+2. Turn on the Apps Script API for that account: https://script.google.com/home/usersettings → **On**.
+3. Add three GitHub secrets (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|---|---|
+| `CLASPRC_JSON` | the whole content of the `.clasprc.json` file in your home folder (Windows: `C:\Users\<you>\.clasprc.json`), created by step 1 |
+| `APPS_SCRIPT_ID` | Apps Script → Project Settings → **Script ID** |
+| `APPS_SCRIPT_DEPLOYMENT_ID` | Deploy → Manage deployments → your **Web app** → **Deployment ID** (starts with `AKfycb…`) |
+
+   Or from PowerShell in the project folder (the last two ask for the value):
+   ```powershell
+   gh secret set CLASPRC_JSON --repo manav-Mnv/aatce-apple-lab --body (Get-Content "$HOME\.clasprc.json" -Raw)
+   ```
+   ```powershell
+   gh secret set APPS_SCRIPT_ID --repo manav-Mnv/aatce-apple-lab
+   ```
+   ```powershell
+   gh secret set APPS_SCRIPT_DEPLOYMENT_ID --repo manav-Mnv/aatce-apple-lab
+   ```
+4. Test it: **Actions → Deploy backend → Run workflow**. The last step prints `live=2.1.0 expected=2.1.0`.
+
+`CLASPRC_JSON` is a sign-in token for that Google account: keep it only in GitHub secrets (never in
+the repo or chat). If it is ever exposed, revoke it at https://myaccount.google.com/permissions
+(remove "Google Apps Script clasp") and repeat step 1.
 
 ---
 

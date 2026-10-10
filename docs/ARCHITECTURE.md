@@ -1,6 +1,6 @@
 # Architecture, tech stack and algorithms
 
-Everything here describes the code on `feature/full-build` (backend API v2.0.0). Numbers quoted
+Everything here describes the code on `feature/full-build` (backend API v2.1.0). Numbers quoted
 (thresholds, timeouts) are the actual constants in the code, with the file they live in.
 
 ---
