@@ -33,6 +33,32 @@ interface LabContext {
 
 const Context = createContext<LabContext | null>(null);
 
+/**
+ * The last response is kept in sessionStorage so a reload shows data instantly while
+ * fresh data loads (an Apps Script call takes 2–4 s). sessionStorage, not localStorage:
+ * student data is cleared when the tab closes and on sign-out, so it never stays on a
+ * shared computer.
+ */
+const CACHE_KEY = 'aatce-lab-data';
+
+function readCache(): LabData | null {
+  try {
+    const raw = sessionStorage.getItem(CACHE_KEY);
+    return raw ? (JSON.parse(raw) as LabData) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(data: LabData | null) {
+  try {
+    if (data) sessionStorage.setItem(CACHE_KEY, JSON.stringify(data));
+    else sessionStorage.removeItem(CACHE_KEY);
+  } catch {
+    // Storage full or blocked: the portal still works, just without instant reloads.
+  }
+}
+
 export function useLab(): LabContext {
   const value = useContext(Context);
   if (!value) throw new Error('useLab must be used inside <LabProvider>');
@@ -46,7 +72,10 @@ export function LabProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
 
-  useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    setData(readCache());
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!auth) return;
@@ -64,6 +93,7 @@ export function LabProvider({ children }: { children: React.ReactNode }) {
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
       setData(body);
+      writeCache(body);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load data');
@@ -103,6 +133,7 @@ export function LabProvider({ children }: { children: React.ReactNode }) {
     },
     signOut: async () => {
       if (auth) await signOut(auth);
+      writeCache(null);
       setData(null);
     }
   };

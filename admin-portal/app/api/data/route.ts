@@ -5,22 +5,24 @@ import type { AttendanceEntry, LabData, OccupancyPerson, Student, WorkshopAttend
 
 export const dynamic = 'force-dynamic';
 
-/** Everything the dashboard shows, fetched in parallel. One lab's data is small enough to send whole. */
+interface Dashboard {
+  occupancy: OccupancyPerson[];
+  entries: AttendanceEntry[];
+  students: Student[];
+  workshops: WorkshopAttendee[];
+}
+
+/** Everything the dashboard shows, in one backend call (each Apps Script call costs ~1.5 s). */
 export async function GET(request: Request) {
   try {
     await requireAdmin(request);
-    const [occupancy, log, roster, workshops] = await Promise.all([
-      callBackend<{ people: OccupancyPerson[] }>('occupancy'),
-      callBackend<{ entries: AttendanceEntry[] }>('attendance_log'),
-      callBackend<{ students: Student[] }>('students'),
-      callBackend<{ attendees: WorkshopAttendee[] }>('workshop_attendees')
-    ]);
+    const dashboard = await callBackend<Dashboard>('dashboard');
     const data: LabData = {
       fetchedAt: new Date().toISOString(),
-      occupancy: occupancy.people,
-      entries: log.entries,
-      students: roster.students,
-      workshops: workshops.attendees
+      occupancy: dashboard.occupancy,
+      entries: dashboard.entries,
+      students: dashboard.students,
+      workshops: dashboard.workshops
     };
     return NextResponse.json(data, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {

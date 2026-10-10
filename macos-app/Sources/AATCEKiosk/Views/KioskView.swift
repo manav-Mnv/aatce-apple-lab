@@ -139,6 +139,7 @@ private struct ScanScreen: View {
         case .idle, .starting, .needsSetup: return (0, .white, false, nil)
         case .identifying, .submitting: return (0, Theme.accent, true, nil)
         case .liveness(let progress): return (progress, Theme.accent, false, nil)
+        case .recognized: return (1, Theme.success, false, "checkmark")
         case .unrecognized: return (1, Theme.checkout, false, "questionmark")
         case .result(let result):
             switch result.kind {
@@ -169,6 +170,8 @@ private struct ScanScreen: View {
             return ("Hold still", "Recognizing you…")
         case .liveness:
             return ("Turn your head slightly", "To either side — it makes sure it's really you.")
+        case .recognized(let firstName):
+            return (firstName.map { "Hi, \($0)" } ?? "Got it", "Recording your scan…")
         case .submitting:
             return ("One moment…", "")
         case .unrecognized:
