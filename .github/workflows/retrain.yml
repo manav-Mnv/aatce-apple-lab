@@ -56,15 +56,23 @@ jobs:
         run: pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
 
       - name: Download face photos
+        id: photos
         if: steps.config.outputs.ready == 'true'
-        run: python -m src.sync_faces --dataset-dir "$RUNNER_TEMP/Face-Dataset"
+        run: |
+          python -m src.sync_faces --dataset-dir "$RUNNER_TEMP/Face-Dataset"
+          if [ -z "$(ls -A "$RUNNER_TEMP/Face-Dataset")" ]; then
+            echo "::notice::Nobody has enrolled yet — nothing to train."
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Generate embeddings
-        if: steps.config.outputs.ready == 'true'
+        if: steps.photos.outputs.any == 'true'
         run: python -m src.pipeline --dataset-dir "$RUNNER_TEMP/Face-Dataset" --output "$RUNNER_TEMP/embeddings.json"
 
       - name: Publish
-        if: steps.config.outputs.ready == 'true'
+        if: steps.photos.outputs.any == 'true'
         run: python -m src.publish --input "$RUNNER_TEMP/embeddings.json"
 
       - name: Remove local copies
