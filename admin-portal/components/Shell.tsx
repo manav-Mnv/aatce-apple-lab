@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useLab } from './LabProvider';
 import { Icon, type IconName } from './Icon';
+import { Spinner } from './ui';
 
 const NAV: { href: string; label: string; icon: IconName }[] = [
   { href: '/', label: 'Overview', icon: 'overview' },
@@ -20,6 +21,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen md:flex">
+      {lab.loading && lab.data && <div className="loading-bar" aria-hidden="true" />}
       <Sidebar />
       <main className="min-w-0 flex-1 px-4 pb-16 pt-6 sm:px-8 md:px-12 md:pt-12">
         {!lab.authEnabled && (
@@ -32,7 +34,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             {lab.error}
           </p>
         )}
-        {children}
+        {lab.data || lab.error ? children : <Loading label="Loading lab data…" />}
       </main>
     </div>
   );
@@ -85,7 +87,20 @@ function Sidebar() {
 }
 
 function Splash() {
-  return <div className="grid min-h-screen place-items-center text-[var(--text-secondary)]">Loading…</div>;
+  return (
+    <div className="grid min-h-screen place-items-center">
+      <Loading label="Starting…" />
+    </div>
+  );
+}
+
+function Loading({ label }: { label: string }) {
+  return (
+    <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 text-[15px] text-[var(--text-secondary)]">
+      <Spinner size={32} />
+      <span>{label}</span>
+    </div>
+  );
 }
 
 function SignIn() {
