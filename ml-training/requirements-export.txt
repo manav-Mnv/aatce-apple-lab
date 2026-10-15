@@ -1,0 +1,10 @@
+# One-off Core ML export of the FaceNet model for the kiosk (macOS or Linux).
+# Verified combination: coremltools 9.0 supports torch ≤ 2.7, and its converter
+# breaks on numpy ≥ 2.4 ("only 0-dimensional arrays can be converted").
+#   pip install -r requirements-export.txt --extra-index-url https://download.pytorch.org/whl/cpu
+numpy==2.2.6
+Pillow>=10.0
+torch==2.7.1
+torchvision==0.22.1
+facenet-pytorch==2.5.3
+coremltools==9.0

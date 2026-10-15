@@ -2,56 +2,80 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, 'feature/**' ]
   pull_request:
     branches: [ main, master ]
 
+permissions:
+  contents: read
+
 jobs:
-  macos-app-build:
-    name: Build macOS App
+  database:
+    name: Database API (Supabase SQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: [ '5432:5432' ]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply migrations and run tests
+        run: |
+          psql -v ON_ERROR_STOP=1 -q -f supabase/tests/ci_setup.sql
+          psql -v ON_ERROR_STOP=1 -q -f supabase/migrations/20261010130000_core.sql
+          psql -v ON_ERROR_STOP=1 -q -f supabase/migrations/20261010143000_harden.sql
+          # The test block always ends with an exception (to roll back); success is its message.
+          out=$(psql -q -f supabase/tests/api_test.sql 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -q "TESTS PASSED"
+
+  ml-training:
+    name: ML pipeline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements-dev.txt
+        working-directory: ml-training
+      - run: python -m pytest -q
+        working-directory: ml-training
+
+  macos-app:
+    name: Kiosk app (macOS)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build placeholder
-        run: echo "xcodebuild goes here when Xcode project is initialized"
+      - run: swift build
+        working-directory: macos-app
+      - run: swift test
+        working-directory: macos-app
+      - run: ./scripts/build-app.sh
+        working-directory: macos-app
 
-  backend-build:
-    name: Test Backend (Apps Script)
+  admin-portal:
+    name: Admin portal
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin-portal
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      - name: Run backend unit tests
-        run: node tests/test_backend.js
-        working-directory: backend
-
-  ml-training-build:
-    name: Test ML Pipeline
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-        working-directory: ml-training
-      - name: Run tests
-        run: python -m pytest tests/ -v
-        working-directory: ml-training
-
-  admin-portal-build:
-    name: Build Admin Portal
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Build placeholder
-        run: echo "npm run build goes here when Node project is initialized"
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: admin-portal/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build

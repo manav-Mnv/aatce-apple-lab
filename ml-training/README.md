@@ -1,109 +1,37 @@
-# ML Training Pipeline — AATCE Apple Lab Attendance System
+# ML pipeline — face embeddings
 
-Python pipeline for generating face embeddings from the Face-Dataset, used by the kiosk app for on-device matching (per [SRS v2.0 §6, Phase 4](../docs/SRS.md)).
+Turns the enrollment photos stored in Supabase into `embeddings.json` (one 512-d FaceNet vector per person)
+and publishes it through the backend; also exports the same model to Core ML for the kiosk.
+Algorithms: [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) §5.
 
-## Architecture
+## Modules (`src/`)
+| File | Does |
+|---|---|
+| `backend_client.py` | POST client for the Supabase API (pipeline role); reads `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `PIPELINE_SECRET` from the environment |
+| `sync_faces.py` | Mirrors `Face-Dataset/<enrollment_no>/` locally via `face_manifest` + `face_images` (25 per call) |
+| `dataset.py` | Loads and validates the local photo folders |
+| `embeddings.py` | Preprocessing `(x − 127.5)/128`, FaceNet InceptionResnetV1 (VGGFace2), per-person mean + L2 normalisation, schema validation |
+| `pipeline.py` | CLI: dataset → embeddings → validated `embeddings.json` (`version: 0`) |
+| `publish.py` | Sets `version = current + 1` and calls `publish_embeddings` |
+| `export_coreml.py` | Exports the model to `FaceNet.mlpackage`; `--check` (macOS) compares with PyTorch |
 
-- **Model:** FaceNet (InceptionResnetV1, pretrained on VGGFace2) via `facenet-pytorch`
-- **Face detection:** MTCNN (Multi-Task Cascaded Convolutional Networks)
-- **Output:** `embeddings.json` — canonical schema consumed by the backend and kiosk app
-- **Scheduling:** Weekly via GitHub Actions ([`.github/workflows/retrain.yml`](../.github/workflows/retrain.yml))
-- **Secrets:** Google service account key stored as GitHub encrypted secret (NFR-8)
+## Requirements files
+| File | For |
+|---|---|
+| `requirements-dev.txt` | unit tests only (no torch — the model is injected as a function) |
+| `requirements.txt` | running the pipeline (torch CPU, facenet-pytorch 2.5.3) |
+| `requirements-export.txt` | Core ML export (pinned: torch 2.7.1, coremltools 9.0, numpy 2.2.6) |
 
-## Project Structure
-
-```
-ml-training/
-├── src/
-│   ├── __init__.py
-│   ├── dataset.py          # Face image dataset loader
-│   ├── embeddings.py       # Embedding generation (FaceNet + MTCNN)
-│   └── pipeline.py         # Main orchestrator (CLI entry point)
-├── tests/
-│   ├── __init__.py
-│   ├── test_dataset.py     # Dataset loader tests (13 tests)
-│   ├── test_embeddings.py  # Embedding generation tests (10 tests)
-│   ├── test_schema.py      # Schema contract tests (17 tests)
-│   └── test_pipeline.py    # Pipeline orchestrator tests (7 tests)
-├── output/                  # Generated embeddings (gitignored except embeddings.json)
-├── pyproject.toml
-├── requirements.txt
-└── README.md
-```
-
-## Setup
-
+## Run
 ```bash
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate  # Linux/macOS
-# .venv\Scripts\activate   # Windows
-
-# Install dependencies
-pip install -r requirements.txt
+pip install -r requirements-dev.txt && python -m pytest
 ```
-
-## Usage
-
 ```bash
-# Full pipeline (requires face images in Face-Dataset/)
-python -m src.pipeline \
-    --dataset-dir ./Face-Dataset \
-    --output ./output/embeddings.json \
-    --previous ./output/embeddings.json \
-    --verbose
-
-# Dry run (validates dataset only, no model download)
-python -m src.pipeline \
-    --dataset-dir ./Face-Dataset \
-    --dry-run
-
-# With GPU
-python -m src.pipeline \
-    --dataset-dir ./Face-Dataset \
-    --output ./output/embeddings.json \
-    --device cuda
+pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
 ```
-
-## Testing
-
 ```bash
-# Run all tests (no GPU or model download required)
-python -m pytest tests/ -v
-
-# With coverage
-python -m pytest tests/ -v --cov=src --cov-report=term-missing
+python -m src.sync_faces --dataset-dir ./Face-Dataset && python -m src.pipeline --dataset-dir ./Face-Dataset --output ./output/embeddings.json && python -m src.publish --input ./output/embeddings.json
 ```
-
-## embeddings.json Schema
-
-See [`backend/API_CONTRACT.md`](../backend/API_CONTRACT.md) for the canonical schema documentation. The pipeline validates output against this schema before writing.
-
-```json
-{
-  "version": 1,
-  "generated_at": "2026-10-01T12:00:00+00:00",
-  "model_version": "facenet-inceptionresnetv1-vggface2",
-  "entries": [
-    {
-      "enrollment_no": "2021001",
-      "embedding_vector": [0.123, -0.456, ...]
-    }
-  ]
-}
-```
-
-## Face-Dataset Structure
-
-```
-Face-Dataset/
-├── 2021001/
-│   ├── face_1.jpg
-│   ├── face_2.jpg
-│   └── face_3.jpg
-├── 2021002/
-│   └── face_1.png
-└── ...
-```
-
-Each subdirectory is named by enrollment number. Contains 1–5 face images per person (SRS FR-3).
+(The last command needs `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` and `PIPELINE_SECRET` set.) In production this runs weekly
+in `.github/workflows/retrain.yml`. `Face-Dataset/`, `output/` and `*.mlpackage` are git-ignored:
+**never commit photos or embeddings.**
