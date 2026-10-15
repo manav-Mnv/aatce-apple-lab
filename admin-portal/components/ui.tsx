@@ -115,3 +115,15 @@ export function downloadCsv(filename: string, csv: string) {
   link.click();
   URL.revokeObjectURL(url);
 }
+
+/** The macOS / iOS activity indicator. */
+export function Spinner({ size = 28 }: { size?: number }) {
+  return (
+    <span className="activity-indicator inline-block" style={{ '--size': `${size}px` } as React.CSSProperties}
+      role="progressbar" aria-label="Loading">
+      {Array.from({ length: 12 }, (_, i) => (
+        <i key={i} style={{ transform: `rotate(${i * 30}deg)`, animationDelay: `${(i - 12) / 12}s` }} />
+      ))}
+    </span>
+  );
+}
