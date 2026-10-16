@@ -122,9 +122,9 @@ export function LabProvider({ children }: { children: React.ReactNode }) {
     refresh,
     signIn: async () => {
       if (!auth) return;
+      // Any Google account may try; the server only lets in the allowed domain / emails.
       const provider = new GoogleAuthProvider();
-      const domain = process.env.NEXT_PUBLIC_ADMIN_EMAIL_DOMAIN;
-      if (domain) provider.setCustomParameters({ hd: domain });
+      provider.setCustomParameters({ prompt: 'select_account' });
       try {
         await signInWithPopup(auth, provider);
       } catch (e) {
