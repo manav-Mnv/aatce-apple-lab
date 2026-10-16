@@ -61,3 +61,54 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
+
+/* Apple-style activity indicator: 12 bars fading in turn (macOS / iOS). */
+.activity-indicator {
+  position: relative;
+  width: var(--size, 28px);
+  height: var(--size, 28px);
+  color: var(--text-secondary);
+}
+.activity-indicator > i {
+  position: absolute;
+  left: 46%;
+  top: 0;
+  width: 8%;
+  height: 28%;
+  border-radius: 999px;
+  background: currentColor;
+  transform-origin: 50% 178%;
+  animation: activity-fade 1s linear infinite;
+}
+@keyframes activity-fade {
+  from { opacity: 1; }
+  to { opacity: 0.15; }
+}
+
+/* Safari-style indeterminate loading bar for background refreshes. */
+.loading-bar {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 3px;
+  overflow: hidden;
+  z-index: 50;
+  pointer-events: none;
+}
+.loading-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: loading-slide 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+@keyframes loading-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-indicator > i { animation-duration: 2.4s; }
+  .loading-bar::after { animation-duration: 2.4s; }
+}
