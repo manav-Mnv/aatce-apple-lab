@@ -1,6 +1,6 @@
 # API Contract — AATCE backend (Supabase)
 
-> **Version 3.0.0** · Endpoint `POST https://<project-ref>.supabase.co/rest/v1/rpc/api`
+> **Version 3.1.0** · Endpoint `POST https://<project-ref>.supabase.co/rest/v1/rpc/api`
 > Headers: `Content-Type: application/json`, `apikey: <publishable key>`
 > Body: `{ "secret": "...", "action": "...", ...params }`
 
@@ -13,7 +13,7 @@ rejects (bad JSON, wrong key) return a non-2xx status with a `PGRST…` body.
 ## Roles
 | Role | Secret (Vault name) | Actions |
 |---|---|---|
-| kiosk | `aatce_kiosk_secret` | `status`, `lookup`, `enroll`, `upload_faces`, `scan`, `embeddings_version`, `embeddings_download` |
+| kiosk | `aatce_kiosk_secret` | `status`, `heartbeat`, `lookup`, `enroll`, `upload_faces`, `scan`, `embeddings_version`, `embeddings_download` |
 | pipeline | `aatce_pipeline_secret` | `status`, `embeddings_version`, `face_manifest`, `face_images`, `publish_embeddings` |
 | admin | `aatce_admin_secret` | `status`, `embeddings_version`, `dashboard`, `occupancy`, `attendance_log`, `students`, `workshop_attendees`, `activity_get`, `activity_submit` |
 
@@ -37,10 +37,11 @@ Secrets are stored as SHA-256 hashes in `lab.secrets`; change one with
 `enrollment_no` must match `^[A-Za-z0-9_-]{1,32}$` (surrounding spaces trimmed). Times are ISO 8601 in Asia/Kolkata (`2026-10-05T09:00:00+05:30`).
 
 ## Any role
-- **`status`** → `{ success, status: "online", timestamp, version: "3.0.0" }`
+- **`status`** → `{ success, status: "online", timestamp, version: "3.1.0" }`
 - **`embeddings_version`** → `{ success, version, generated_at, model_version, entry_count }` (`version: 0` before the first publish)
 
 ## Kiosk
+- **`heartbeat`** `{ app_version, queued, faces, embeddings_version, workshop_name, match_threshold, problem, events: [{ at, kind, enrollment_no?, score?, detail? } ×0–200] }` — sent every 30 s. `kind` is `recognized`, `unrecognized` (with the closest person and score), `liveness_failed`, `queued` or `error`; unknown kinds and events older than 7 days are skipped, and events are kept 30 days. → the `status` reply plus `events_saved`
 - **`lookup`** `{ enrollment_no }` → `{ success, enrollment_no, is_member, is_enrolled, name, email_hint, photo_count }` (email masked `al•••@uni.ac.in`)
 - **`enroll`** `{ enrollment_no, consent: true, name?, email? }` — members' identity comes from `lab.students`; non-members need `name` + valid `email`. Records consent; re-enrolling updates the same row. → `{ success, enrollment_no, name, email_hint, is_member, is_new, photo_count }`
 - **`upload_faces`** `{ enrollment_no, images: [base64 JPEG ×1–5, each ≤ 200 KB] }` → `{ success, enrollment_no, saved, photo_count }` (appends, never replaces)
@@ -57,7 +58,7 @@ Secrets are stored as SHA-256 hashes in `lab.secrets`; change one with
 - **`publish_embeddings`** `{ embeddings }` — `version` integer > current; non-empty `generated_at`, `model_version`; every entry a unique valid `enrollment_no` with exactly 512 numbers. Keeps the last three versions. → `{ success, version, entry_count }`
 
 ## Admin
-- **`dashboard`** → `{ success, occupancy, entries, students, workshops }` (the four lists below in one call)
+- **`dashboard`** → `{ success, occupancy, entries, students, workshops, kiosk }` (the four lists below in one call, plus `kiosk`: `{ online, last_seen, app_version, queued, faces, embeddings_version, workshop_name, match_threshold, problem, today: { recognized, unrecognized, liveness_failed }, events: [latest 50, with `name`] }`; `online` = heartbeat in the last 3 minutes)
 - **`occupancy`** → `{ success, count, people: [{ session_id, enrollment_no, name, batch_tags, entry_time }] }`
 - **`attendance_log`** `{ date?: "yyyy-mm-dd", enrollment_no? }` → `{ success, count, entries: [{ session_id, enrollment_no, entry_time, exit_time, duration_mins, activity_form_status, activity_description, email_sent, notes }] }` (`duration_mins` and `exit_time` are `""` while a session is open)
 - **`students`** `{ batch? }` → `{ success, count, students: [{ enrollment_no, name, email, batch_tags, face_enrolled, photo_count, consent_at }] }`

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { AuthError, requireAdmin } from '@/lib/auth-server';
 import { BackendError, callBackend } from '@/lib/backend';
-import type { AttendanceEntry, LabData, OccupancyPerson, Student, WorkshopAttendee } from '@/lib/types';
+import type { AttendanceEntry, KioskInfo, LabData, OccupancyPerson, Student, WorkshopAttendee } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,14 +10,15 @@ interface Dashboard {
   entries: AttendanceEntry[];
   students: Student[];
   workshops: WorkshopAttendee[];
+  kiosk?: KioskInfo;
 }
 
 /** Everything the dashboard shows, in one backend call. */
 export async function GET(request: Request) {
   try {
     await requireAdmin(request);
-    const { occupancy, entries, students, workshops } = await callBackend<Dashboard>('dashboard');
-    const data: LabData = { fetchedAt: new Date().toISOString(), occupancy, entries, students, workshops };
+    const { occupancy, entries, students, workshops, kiosk } = await callBackend<Dashboard>('dashboard');
+    const data: LabData = { fetchedAt: new Date().toISOString(), occupancy, entries, students, workshops, kiosk };
     return NextResponse.json(data, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.status });

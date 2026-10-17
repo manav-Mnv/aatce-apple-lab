@@ -47,6 +47,22 @@ final class BackendClientTests: XCTestCase {
         XCTAssertEqual(lastBody["action"] as? String, "status")
     }
 
+    func testHeartbeatSendsHealthAndEvents() async throws {
+        let beat = KioskHeartbeat(appVersion: "2.1.0", queued: 1, faces: 6, embeddingsVersion: 0,
+                                  workshopName: "", matchThreshold: 0.6, problem: "")
+        _ = try await client(responding: Fixture.status).heartbeat(beat, events: [
+            KioskEvent(kind: .recognized, enrollmentNo: "2021001", score: 0.8),
+            KioskEvent(kind: .livenessFailed)
+        ])
+        XCTAssertEqual(lastBody["action"] as? String, "heartbeat")
+        XCTAssertEqual(lastBody["faces"] as? Int, 6)
+        let events = try XCTUnwrap(lastBody["events"] as? [[String: Any]])
+        XCTAssertEqual(events.map { $0["kind"] as? String }, ["recognized", "liveness_failed"])
+        XCTAssertEqual(events[0]["enrollment_no"] as? String, "2021001")
+        XCTAssertEqual(events[0]["score"] as? Double ?? 0, 0.8, accuracy: 1e-6)
+        XCTAssertNil(events[1]["enrollment_no"])
+    }
+
     func testLookupDecodesNumericEnrollmentNumbers() async throws {
         let response = try await client(responding: Fixture.lookup).lookup(enrollmentNo: "2021001")
         XCTAssertEqual(lastBody["enrollment_no"] as? String, "2021001")

@@ -45,7 +45,7 @@ begin
   assert public.api('{"secret":"nope","action":"status"}')->>'error_code' = 'auth_invalid'; n := n + 1;
   assert public.api('[1,2]')->>'error_code' = 'invalid_json'; n := n + 1;
   r := public.api(jsonb_build_object('secret', k, 'action', 'status'));
-  assert r->>'version' = '3.0.0' and (r->>'success')::boolean, r::text; n := n + 1;
+  assert r->>'version' = '3.1.0' and (r->>'success')::boolean, r::text; n := n + 1;
   assert public.api(jsonb_build_object('secret', k, 'action', 'students'))->>'error_code' = 'forbidden'; n := n + 1;
   assert public.api(jsonb_build_object('secret', p, 'action', 'scan', 'enrollment_no', 'T1'))->>'error_code' = 'forbidden'; n := n + 1;
   assert public.api(jsonb_build_object('secret', a, 'action', 'enroll'))->>'error_code' = 'forbidden'; n := n + 1;
@@ -195,6 +195,26 @@ begin
                                         jsonb_build_object('enrollment_no', 'T1', 'embedding_vector', vec)))))->>'error_code' = 'validation_error'; n := n + 1;
   assert public.api(jsonb_build_object('secret', p, 'action', 'publish_embeddings', 'embeddings', jsonb_build_object(
            'version', '2', 'generated_at', 'x', 'model_version', 'm', 'entries', '[]'::jsonb)))->>'error_code' = 'validation_error'; n := n + 1;
+
+  -- kiosk telemetry
+  delete from lab.kiosk_status;
+  delete from lab.kiosk_events;
+  r := public.api(jsonb_build_object('secret', a, 'action', 'dashboard'));
+  assert not (r->'kiosk'->>'online')::boolean and jsonb_array_length(r->'kiosk'->'events') = 0, r::text; n := n + 1;
+  assert public.api(jsonb_build_object('secret', a, 'action', 'heartbeat'))->>'error_code' = 'forbidden'; n := n + 1;
+  r := public.api(jsonb_build_object('secret', k, 'action', 'heartbeat', 'app_version', '1.1', 'queued', 2, 'faces', 6,
+         'match_threshold', 0.6, 'events', jsonb_build_array(
+           jsonb_build_object('at', lab.iso(now()), 'kind', 'recognized', 'enrollment_no', 'T1', 'score', 0.81),
+           jsonb_build_object('at', lab.iso(now()), 'kind', 'unrecognized', 'score', 0.52),
+           jsonb_build_object('at', lab.iso(now()), 'kind', 'bogus'),
+           jsonb_build_object('at', 'not a time', 'kind', 'error'))));
+  assert r->>'status' = 'online' and (r->>'events_saved')::int = 2, r::text; n := n + 1;
+  r := public.api(jsonb_build_object('secret', a, 'action', 'dashboard'))->'kiosk';
+  assert (r->>'online')::boolean and (r->>'queued')::int = 2 and (r->>'faces')::int = 6
+     and (r->'today'->>'recognized')::int = 1 and (r->'today'->>'unrecognized')::int = 1
+     and r->'events'->0->>'kind' is not null, r::text; n := n + 1;
+  assert (select name from jsonb_to_recordset(r->'events') as e(kind text, name text) where kind = 'recognized') = 'Alice Student', r::text; n := n + 1;
+  assert public.api(jsonb_build_object('secret', k, 'action', 'heartbeat', 'queued', 'lots'))->>'error_code' = 'validation_error'; n := n + 1;
 
   raise exception 'TESTS PASSED: %', n;
 end

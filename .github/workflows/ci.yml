@@ -32,6 +32,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -q -f supabase/tests/ci_setup.sql
           psql -v ON_ERROR_STOP=1 -q -f supabase/migrations/20261010130000_core.sql
           psql -v ON_ERROR_STOP=1 -q -f supabase/migrations/20261010143000_harden.sql
+          psql -v ON_ERROR_STOP=1 -q -f supabase/migrations/20261017120000_kiosk_telemetry.sql
           # The test block always ends with an exception (to roll back); success is its message.
           out=$(psql -q -f supabase/tests/api_test.sql 2>&1 || true)
           echo "$out"

@@ -10,7 +10,8 @@ const NAV: { href: string; label: string; icon: IconName }[] = [
   { href: '/', label: 'Overview', icon: 'overview' },
   { href: '/sessions', label: 'Sessions', icon: 'sessions' },
   { href: '/students', label: 'Students', icon: 'students' },
-  { href: '/analytics', label: 'Analytics', icon: 'analytics' }
+  { href: '/analytics', label: 'Analytics', icon: 'analytics' },
+  { href: '/kiosk', label: 'Kiosk', icon: 'kiosk' }
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {

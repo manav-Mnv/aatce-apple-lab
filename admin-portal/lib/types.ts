@@ -45,4 +45,30 @@ export interface LabData {
   entries: AttendanceEntry[];
   students: Student[];
   workshops: WorkshopAttendee[];
+  /** Missing in data cached before backend v3.1. */
+  kiosk?: KioskInfo;
+}
+
+export interface KioskEvent {
+  at: string;
+  kind: 'recognized' | 'unrecognized' | 'liveness_failed' | 'queued' | 'error';
+  enrollment_no: string;
+  name: string;
+  score: number | null;
+  detail: string;
+}
+
+/** The kiosk's last heartbeat and its recent scan attempts. */
+export interface KioskInfo {
+  last_seen: string;
+  online: boolean;
+  app_version: string;
+  queued: number;
+  faces: number;
+  embeddings_version: number;
+  workshop_name: string;
+  match_threshold: number | null;
+  problem: string;
+  today: { recognized: number; unrecognized: number; liveness_failed: number };
+  events: KioskEvent[];
 }
