@@ -32,6 +32,15 @@ final class FaceMatcherTests: XCTestCase {
         XCTAssertNil(matcher.bestMatch(for: [0, 0, 0]))
     }
 
+    func testEvaluateReportsTheClosestEvenBelowThreshold() {
+        let matcher = FaceMatcher(templates: ["A": unit(0), "B": unit(1.2)], threshold: 0.65)
+        let result = matcher.evaluate(unit(0.9))
+        XCTAssertEqual(result.closest?.enrollmentNo, "A")
+        XCTAssertEqual(result.closest?.score ?? 0, cos(0.9), accuracy: 1e-5)
+        XCTAssertEqual(result.runnerUp, cos(0.3), accuracy: 1e-5)
+        XCTAssertNil(matcher.bestMatch(for: unit(0.9)))
+    }
+
     func testEmptyMatcher() {
         XCTAssertNil(FaceMatcher(templates: [:]).bestMatch(for: [1, 0, 0]))
     }

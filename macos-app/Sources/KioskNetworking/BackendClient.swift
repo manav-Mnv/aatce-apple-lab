@@ -40,6 +40,26 @@ public struct BackendClient: Sendable {
         try await post("status")
     }
 
+    /// Reports health and recent scan attempts (max 200 events per call).
+    public func heartbeat(_ heartbeat: KioskHeartbeat, events: [KioskEvent]) async throws -> StatusResponse {
+        try await post("heartbeat", [
+            "app_version": heartbeat.appVersion,
+            "queued": heartbeat.queued,
+            "faces": heartbeat.faces,
+            "embeddings_version": heartbeat.embeddingsVersion,
+            "workshop_name": heartbeat.workshopName,
+            "match_threshold": heartbeat.matchThreshold,
+            "problem": heartbeat.problem,
+            "events": events.prefix(200).map { event -> [String: Any] in
+                var item: [String: Any] = ["kind": event.kind.rawValue, "at": Self.isoFormatter.string(from: event.at),
+                                           "detail": event.detail]
+                item["enrollment_no"] = event.enrollmentNo
+                item["score"] = event.score.map { Double($0) }
+                return item
+            }
+        ])
+    }
+
     public func lookup(enrollmentNo: String) async throws -> LookupResponse {
         try await post("lookup", ["enrollment_no": enrollmentNo])
     }

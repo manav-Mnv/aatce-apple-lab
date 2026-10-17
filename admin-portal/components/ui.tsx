@@ -100,11 +100,12 @@ export function ExportButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-export function Badge({ children, tone = 'neutral' }: { children: React.ReactNode; tone?: 'neutral' | 'warning' | 'good' }) {
+export function Badge({ children, tone = 'neutral' }: { children: React.ReactNode; tone?: 'neutral' | 'warning' | 'good' | 'critical' }) {
   const tones = {
     neutral: 'bg-[var(--fill)] text-[var(--text-secondary)]',
     warning: 'bg-[var(--warning-bg)] text-[var(--warning-text)]',
-    good: 'bg-[var(--good-bg)] text-[var(--good-text)]'
+    good: 'bg-[var(--good-bg)] text-[var(--good-text)]',
+    critical: 'bg-[var(--critical-bg)] text-[var(--critical-text)]'
   };
   return <span className={`inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-[12px] ${tones[tone]}`}>{children}</span>;
 }

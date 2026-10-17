@@ -30,7 +30,15 @@ public struct FaceMatcher: Sendable {
     public var count: Int { templates.count }
 
     public func bestMatch(for probe: [Float]) -> FaceMatch? {
-        guard let probe = Vector.normalized(probe) else { return nil }
+        let result = evaluate(probe)
+        guard let match = result.closest, match.score >= threshold, match.score - result.runnerUp >= margin else { return nil }
+        return match
+    }
+
+    /// The closest person and the next-best score, whether or not it counts as a match
+    /// (reported to the portal so the threshold can be tuned).
+    public func evaluate(_ probe: [Float]) -> (closest: FaceMatch?, runnerUp: Float) {
+        guard let probe = Vector.normalized(probe) else { return (nil, -1) }
         var best: FaceMatch?
         var runnerUp: Float = -1
         for template in templates where template.vector.count == probe.count {
@@ -42,8 +50,7 @@ public struct FaceMatcher: Sendable {
                 best = FaceMatch(enrollmentNo: template.enrollmentNo, score: score)
             }
         }
-        guard let match = best, match.score >= threshold, match.score - runnerUp >= margin else { return nil }
-        return match
+        return (best, runnerUp)
     }
 }
 

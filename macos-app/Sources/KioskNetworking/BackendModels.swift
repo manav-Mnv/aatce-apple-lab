@@ -166,3 +166,44 @@ public struct EmbeddingsFile: Codable, Equatable, Sendable {
 struct EmbeddingsDownloadResponse: Decodable {
     let embeddings: EmbeddingsFile
 }
+
+/// One scan attempt, reported to the admin portal with the next heartbeat.
+public struct KioskEvent: Equatable, Sendable {
+    public enum Kind: String, Sendable { case recognized, unrecognized, livenessFailed = "liveness_failed", queued, error }
+
+    public let kind: Kind
+    public let at: Date
+    public let enrollmentNo: String?
+    public let score: Float?
+    public let detail: String
+
+    public init(kind: Kind, at: Date = Date(), enrollmentNo: String? = nil, score: Float? = nil, detail: String = "") {
+        self.kind = kind
+        self.at = at
+        self.enrollmentNo = enrollmentNo
+        self.score = score
+        self.detail = detail
+    }
+}
+
+/// The kiosk's health, sent once a minute so admins can see it in the portal.
+public struct KioskHeartbeat: Equatable, Sendable {
+    public var appVersion: String
+    public var queued: Int
+    public var faces: Int
+    public var embeddingsVersion: Int
+    public var workshopName: String
+    public var matchThreshold: Double
+    public var problem: String
+
+    public init(appVersion: String, queued: Int, faces: Int, embeddingsVersion: Int,
+                workshopName: String, matchThreshold: Double, problem: String) {
+        self.appVersion = appVersion
+        self.queued = queued
+        self.faces = faces
+        self.embeddingsVersion = embeddingsVersion
+        self.workshopName = workshopName
+        self.matchThreshold = matchThreshold
+        self.problem = problem
+    }
+}

@@ -144,7 +144,7 @@ final class EnrollmentModel: ObservableObject {
     private func save() async {
         step = .saving
         do {
-            let vectors = try crops.map { try embedder.embedding(for: $0) }
+            let vectors = try await embedder.embeddings(for: crops)
             guard let template = Vector.mean(vectors) else { throw EnrollmentError.embedding }
             let jpegs = try crops.map(Self.jpeg)
             _ = try await client.uploadFaces(enrollmentNo: trimmedNumber, jpegImages: jpegs)

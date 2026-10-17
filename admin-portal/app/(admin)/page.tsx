@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo } from 'react';
 import { ColumnChart } from '@/components/Charts';
 import { useLab } from '@/components/LabProvider';
@@ -20,10 +21,25 @@ export default function Overview() {
   const perDay = sessionsPerDay(sessions, 14, now);
   const recent = sessions.filter((s) => s.activity).slice(0, 6);
   const occupancy = data?.occupancy ?? [];
+  const kiosk = data?.kiosk;
+  const visitorsToday = (data?.workshops ?? []).filter((w) => dayKey(new Date(w.date)) === today).length;
 
   return (
     <>
       <PageHeader title="Overview" subtitle={now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })} />
+
+      {kiosk && (
+        <Link href="/kiosk" className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-[20px] bg-[var(--card)] px-5 py-3.5 text-[14px] shadow-[var(--card-shadow)] transition hover:bg-[var(--fill)]">
+          <span className="flex items-center gap-2 font-medium">
+            <span className={`h-2 w-2 rounded-full ${kiosk.online ? 'bg-[var(--good-text)]' : 'bg-[var(--critical-text)]'}`} />
+            Kiosk {kiosk.online ? 'online' : 'offline'}
+          </span>
+          <span className="text-[var(--text-secondary)]">{kiosk.today.recognized} recognised · {kiosk.today.unrecognized} not recognised today</span>
+          {visitorsToday > 0 && <span className="text-[var(--text-secondary)]">{visitorsToday} workshop visitors today</span>}
+          {kiosk.problem && <Badge tone="critical">needs attention</Badge>}
+          <span className="ml-auto text-[var(--accent)]">Details ›</span>
+        </Link>
+      )}
 
       <div className="grid gap-5 lg:grid-cols-3">
         <Card className="lg:col-span-1">
