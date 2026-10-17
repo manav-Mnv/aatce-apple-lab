@@ -1,5 +1,7 @@
 # AATCE Apple Lab Attendance System
 
+![Status](https://img.shields.io/badge/status-in%20development-dbab09?style=flat-square)
+
 Face-recognition check-in/check-out for the **Swift Coding Club's Apple Lab, Parul University**.
 Students look at the lab iMac to check in and out; the kiosk recognises them on-device, attendance
 lands in a Supabase database, students get a short "what did you work on?" email, and faculty see
